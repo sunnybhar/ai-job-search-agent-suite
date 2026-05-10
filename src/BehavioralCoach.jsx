@@ -877,7 +877,7 @@ export default function BehavioralCoach() {
 
                     if (turn.type === "feedback") {
                       const fb = turn.data.feedback;
-                      const scoreColor = fb.score >= 75 ? "#059669" : fb.score >= 55 ? "#d97706" : "#e11d48";
+                      
                       return (
                         <div key={i} className="fade" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                           <div style={{
