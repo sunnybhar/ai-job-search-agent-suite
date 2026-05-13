@@ -323,7 +323,7 @@ function TextInput({ value, onChange, placeholder }) {
       style={{
         width: "100%", background: "#f4f5fd",
         border: "1px solid #dde0f0", borderRadius: 10,
-        padding: "10px 14px", color: "#dde0f0",
+        padding: "10px 14px", color: "#111328",
         fontSize: 12.5, fontFamily: "inherit",
         transition: "border-color 0.2s, box-shadow 0.2s"
       }}
@@ -425,7 +425,7 @@ export default function CoverLetterAgent() {
   
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8f9ff", fontFamily: "'Bricolage Grotesque', 'Sora', sans-serif", color: "#dde0f0", paddingBottom: 80 }}>
+    <div style={{ minHeight: "100vh", background: "#f8f9ff", fontFamily: "'Bricolage Grotesque', 'Sora', sans-serif", color: "#111328", paddingBottom: 80 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -612,12 +612,12 @@ export default function CoverLetterAgent() {
             }}>
               <div>
                 <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Role</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#dde0f0" }}>{result.role_title}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#111328" }}>{result.role_title}</div>
               </div>
               <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
               <div>
                 <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Company</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#dde0f0" }}>{result.company_name}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#111328" }}>{result.company_name}</div>
               </div>
               {result.req_id && <>
                 <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
@@ -700,7 +700,7 @@ export default function CoverLetterAgent() {
                   padding: "40px 48px", minHeight: 400
                 }}>
                   <pre style={{
-                    fontSize: 13.5, color: "#dde0f0", lineHeight: 1.95,
+                    fontSize: 13.5, color: "#111328", lineHeight: 1.95,
                     fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 400
                   }}>
                     {activeData.body}
