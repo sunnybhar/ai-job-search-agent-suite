@@ -307,7 +307,7 @@ function TextArea({ value, onChange, placeholder, rows = 6 }) {
       style={{
         width: "100%", background: "#f4f5fd",
         border: "1px solid #dde0f0", borderRadius: 10,
-        padding: "12px 14px", color: "#dde0f0",
+        padding: "12px 14px", color: "#111328",
         fontSize: 12.5, lineHeight: 1.7, fontFamily: "inherit",
         transition: "border-color 0.2s, box-shadow 0.2s"
       }}
