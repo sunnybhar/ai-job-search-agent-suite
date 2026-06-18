@@ -251,7 +251,7 @@ ${extras.join("\n")}`;
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: "claude-opus-4-8",
       max_tokens: 4000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }]
