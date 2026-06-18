@@ -179,7 +179,7 @@ async function apiCallJSON(systemPrompt, userMessage) {
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 2000,
       system: systemPrompt,
       messages: [
@@ -222,7 +222,7 @@ async function fetchUrlContent(url) {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514", max_tokens: 800,
+      model: "claude-sonnet-4-6", max_tokens: 800,
       system: "Search and return a concise factual summary: what the company does, product, business model, customers, recent news. Plain text only.",
       messages: [{ role: "user", content: `Search: ${q}\nURL: ${url}` }],
       tools: [{ type: "web_search_20250305", name: "web_search" }]
@@ -245,7 +245,7 @@ async function extractPDFText(file) {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514", max_tokens: 2000,
+            model: "claude-sonnet-4-6", max_tokens: 2000,
             messages: [{
               role: "user",
               content: [

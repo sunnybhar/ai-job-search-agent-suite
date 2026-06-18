@@ -157,7 +157,7 @@ async function fetchUrlContent(url) {
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 2000,
       messages: [{
         role: "user",
@@ -218,7 +218,7 @@ ${background}`;
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 4000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }]
@@ -283,21 +283,7 @@ function SectionHeader({ icon, number, title, color }) {
   );
 }
 
-function StatusBadge({ status, label }) {
-  const s = {
-    idle:     { bg: "#f0f1fa", color: "#888baa", dot: "#cdd0e8" },
-    loading:  { bg: "#2563eb08", color: "#2563eb", dot: "#2563eb" },
-    success:  { bg: "#05966908", color: "#059669", dot: "#059669" },
-    error:    { bg: "#e1184908", color: "#e11d48", dot: "#e11d48" },
-  }[status];
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20, background: s.bg, border: `1px solid ${s.dot}30` }}>
-      <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.dot, flexShrink: 0,
-        animation: status === "loading" ? "pulse 1s infinite" : "none" }} />
-      <span style={{ fontSize: 11, color: s.color, fontWeight: 600, fontFamily: "'DM Mono', monospace" }}>{label}</span>
-    </div>
-  );
-}
+
 
 const PERSON_TYPES = [
   { id: "MBA Alumni",        icon: "🎓", color: "#2563eb", pill: "blue"   },
