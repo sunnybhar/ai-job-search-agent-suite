@@ -121,12 +121,20 @@ Output the resume text and nothing else.`;
 // API HELPERS
 // ─────────────────────────────────────────────────────────────────
 function safeParseJSON(raw) {
-  let text = raw.replace(/```json|```/g, "").trim();
+  if (!raw) throw new Error("Empty response");
+  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON found in response");
   text = text.slice(start, end + 1);
-  return JSON.parse(text);
+  try { return JSON.parse(text); } catch {}
+  const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  try { return JSON.parse(cleaned); } catch {}
+  const sanitized = cleaned.replace(
+    /"((?:[^"\\]|\\.)*)"/gs,
+    m => m.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
+  );
+  return JSON.parse(sanitized);
 }
 
 async function apiCall(systemPrompt, userMessage) {
@@ -139,7 +147,7 @@ async function apiCall(systemPrompt, userMessage) {
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-opus-4-8",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 8000,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }]
