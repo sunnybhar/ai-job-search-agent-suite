@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import ResumeTailorAgent from './ResumeTailorAgent';
+import ResumeTailorAgentSunny from './ResumeTailorAgent_Sunny';
+import ResumeTailorAgentTanya from './ResumeTailorAgent_Tanya';
 import CoverLetterAgent from './CoverLetterAgent';
 import CoffeeChatAgent from './CoffeeChatAgent';
 import StartupEmailAgent from './StartupEmailAgent';
@@ -7,15 +8,24 @@ import FollowUpAgent from './FollowUpAgent';
 import BehavioralCoach from './BehavioralCoach';
 
 const AGENTS = [
-  {
-    id: 'resume',
-    number: '01',
-    name: 'JD-to-Resume Tailor',
-    description: 'Rewrites your full resume to match any JD — ATS scoring, keyword injection, error report',
-    icon: '⚡',
-    color: '#00a67e',
-    component: <ResumeTailorAgent />
-  },
+{
+  id: 'resume-sunny',
+  number: '01',
+  name: 'JD to Resume — Sunny',
+  description: 'ATS scoring + full resume rewrite — calibrated for PM and Ops roles',
+  icon: '⚡',
+  color: '#00a67e',
+  component: <ResumeTailorAgentSunny />
+},
+{
+  id: 'resume-tanya',
+  number: '01T',
+  name: 'JD to Resume — Tanya',
+  description: 'ATS scoring + full resume rewrite — calibrated for Sustainability and ESG roles',
+  icon: '🌿',
+  color: '#059669',
+  component: <ResumeTailorAgentTanya />
+},
   {
     id: 'cover',
     number: '03',
