@@ -5,14 +5,7 @@ const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
 // ─────────────────────────────────────────────────────────────────
 // CANDIDATE
 // ─────────────────────────────────────────────────────────────────
-const CANDIDATE = {
-  name: "Sunny Bhargava",
-  title: "MBA Candidate, Fordham University — Gabelli School of Business, Class of 2027",
-  email: "sb299@fordham.edu",
-  linkedin: "linkedin.com/in/bhargavasunny",
-  mobile: "+1 (551) 998-5759",
-  calendly: "https://calendly.com/sunnybhargava1611/30min",
-};
+
 
 const RESUME = `Sunny Bhargava | PM + Ops | Fordham MBA 2027 | Dean's Scholar | IIT-ISM B.Tech Mechanical Engineering
 Key achievements:

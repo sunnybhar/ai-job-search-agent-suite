@@ -128,6 +128,7 @@ function safeParseJSON(raw) {
   if (start === -1 || end === -1) throw new Error("No JSON found in response");
   text = text.slice(start, end + 1);
   try { return JSON.parse(text); } catch {}
+  // eslint-disable-next-line no-control-regex
   const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
   try { return JSON.parse(cleaned); } catch {}
   const sanitized = cleaned.replace(

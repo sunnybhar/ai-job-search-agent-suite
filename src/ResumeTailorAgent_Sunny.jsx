@@ -128,6 +128,7 @@ function safeParseJSON(raw) {
   if (start === -1 || end === -1) throw new Error("No JSON found in response");
   text = text.slice(start, end + 1);
   try { return JSON.parse(text); } catch {}
+  // eslint-disable-next-line no-control-regex
   const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
   try { return JSON.parse(cleaned); } catch {}
   const sanitized = cleaned.replace(
@@ -331,7 +332,7 @@ export default function ResumeTailorAgent() {
               Agent 01 · Job Search Suite
             </div>
             <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, color: "#111328", lineHeight: 1 }}>
-              JD-to-Resume Tailor{" "}
+              JD to Resume — Sunny{" "}
               <span style={{ fontSize: 12, fontWeight: 400, color: "#555878", letterSpacing: 0 }}>v3.0</span>
             </h1>
           </div>
