@@ -60,13 +60,16 @@ async function extractPDF(file) {
       lines[key].push(it);
     });
 
-    // Sort lines top-to-bottom, then items left-to-right within each line
+    // Sort lines top-to-bottom, then items left-to-right within each line.
+    // Built into a local string first (not a closure reassigning the outer
+    // `fullText`) so ESLint's no-loop-func rule is satisfied.
     const sortedYs = Object.keys(lines).sort((a, b) => Number(b) - Number(a));
+    let pageText = "";
     sortedYs.forEach(y => {
       const lineItems = lines[y].sort((a, b) => a.x - b.x);
-      fullText += lineItems.map(it => it.str).join(" ") + "\n";
+      pageText += lineItems.map(it => it.str).join(" ") + "\n";
     });
-    fullText += "\n";
+    fullText += pageText + "\n";
   }
 
   // Detect parse-hostile signal — very low text yield
@@ -400,15 +403,8 @@ export default function ATSScannerAgent() {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState("parse");
-  const [copied, setCopied] = useState("");
   const fileInputRef = useRef(null);
   const resultRef = useRef(null);
-
-  function copyText(text, id) {
-    navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(""), 2000);
-  }
 
   async function handleScan() {
     if (!file) { setError("Upload your resume file first."); return; }

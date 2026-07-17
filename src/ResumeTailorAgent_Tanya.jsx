@@ -316,12 +316,15 @@ async function extractPDF(file) {
       if (!lines[key]) lines[key] = [];
       lines[key].push(it);
     });
+    // Built into a local string first (not a closure reassigning the outer
+    // `fullText`) so ESLint's no-loop-func rule is satisfied.
+    let pageText = "";
     Object.keys(lines)
       .sort((a, b) => Number(b) - Number(a))
       .forEach((y) => {
-        fullText += lines[y].sort((a, b) => a.x - b.x).map((it) => it.str).join(" ") + "\n";
+        pageText += lines[y].sort((a, b) => a.x - b.x).map((it) => it.str).join(" ") + "\n";
       });
-    fullText += "\n";
+    fullText += pageText + "\n";
   }
   return fullText.trim();
 }
