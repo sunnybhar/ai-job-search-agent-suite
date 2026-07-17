@@ -1,6 +1,43 @@
 import { useState, useRef } from "react";
 
-const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+// All API calls go through the serverless proxy — key never in the browser
+const API_URL = "/api/claude";
+// LOCAL DEV FALLBACK: with REACT_APP_ANTHROPIC_KEY in .env, plain `npm start`
+// works. In Vercel, DELETE that env var so production uses the proxy.
+const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
+const apiHeaders = () =>
+  DEV_KEY
+    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
+    : { "Content-Type": "application/json" };
+
+// ── STORY BANK — durable STAR stories linked to resume claims ──
+const STORY_BANK_KEY = "jobsuite_story_bank";
+function loadStories() {
+  try { return JSON.parse(localStorage.getItem(STORY_BANK_KEY)) || []; } catch { return []; }
+}
+function saveStory(story) {
+  const all = [story, ...loadStories()].slice(0, 40);
+  try { localStorage.setItem(STORY_BANK_KEY, JSON.stringify(all)); } catch {}
+  return all;
+}
+function deleteStory(id) {
+  const all = loadStories().filter((s) => s.id !== id);
+  try { localStorage.setItem(STORY_BANK_KEY, JSON.stringify(all)); } catch {}
+  return all;
+}
+
+// Quantified claims from the saved base resume (Resume Tailor stores it) —
+// every one of these is a claim an interviewer will probe. Each needs a story.
+function resumeClaims() {
+  const base = localStorage.getItem("tailor_sunny_base_resume") || "";
+  return base
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => (l.startsWith("\u2022") || l.startsWith("-")) && /\d/.test(l))
+    .map((l) => l.replace(/^[\u2022-]\s*/, "").slice(0, 110))
+    .slice(0, 12);
+}
 
 // ─────────────────────────────────────────────────────────────────
 // CANDIDATE
@@ -41,6 +78,7 @@ const MODES = [
   { id: "bank",  icon: "📋", label: "Question Bank",   desc: "Get 8 calibrated questions for your role" },
   { id: "grade", icon: "🎯", label: "Answer Grader",   desc: "Paste your answer — get scored + coached" },
   { id: "mock",  icon: "🎤", label: "Full Mock",       desc: "Live interview — question → answer → feedback → next" },
+  { id: "stories", icon: "📚", label: "Story Bank",     desc: "Your saved STAR stories, mapped to resume claims" },
 ];
 
 // ─────────────────────────────────────────────────────────────────
@@ -262,29 +300,20 @@ function safeParseJSON(raw) {
 }
 
 async function apiCallJSON(systemPrompt, userMessage) {
-  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === "YOUR_API_KEY_HERE") throw new Error("API_KEY_MISSING");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch(apiUrl(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-opus-4-8",
       max_tokens: 3000,
-      system: systemPrompt,
-      messages: [
-        { role: "user", content: userMessage },
-        { role: "assistant", content: "{" }
-      ]
+      system: systemPrompt + "\n\nIMPORTANT: Respond with ONLY the raw JSON object. Start with { and end with }. No preamble, no markdown fences.",
+      messages: [{ role: "user", content: userMessage }]
     })
   });
   if (!res.ok) { const e = await res.json(); throw new Error(e?.error?.message || `API error ${res.status}`); }
   const data = await res.json();
   const text = data.content.filter(b => b.type === "text").map(b => b.text).join("");
-  return safeParseJSON("{" + text);
+  return safeParseJSON(text);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -370,6 +399,27 @@ export default function BehavioralCoach() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+
+  // Story bank
+  const [stories, setStories] = useState(() => loadStories());
+  const [storyClaim, setStoryClaim] = useState("");
+  const [storySaved, setStorySaved] = useState(false);
+  const claims = resumeClaims();
+
+  function handleSaveStory() {
+    if (!gradeAnswer.trim()) return;
+    setStories(saveStory({
+      id: Date.now(),
+      title: (gradeQuestion || "Untitled story").slice(0, 90),
+      competency: gradeResult?.scores ? Object.keys(gradeResult.scores).join(", ") : track.label,
+      claim: storyClaim,
+      answer: gradeAnswer,
+      score: gradeResult?.overall_score || null,
+      date: new Date().toISOString().slice(0, 10),
+    }));
+    setStorySaved(true);
+    setTimeout(() => setStorySaved(false), 3000);
+  }
   const resultRef = useRef(null);
   const mockBottomRef = useRef(null);
 
@@ -801,8 +851,90 @@ export default function BehavioralCoach() {
                     </div>
                   </div>
                 )}
+
+                {/* Save to story bank */}
+                <div style={{ background: "#ffffff", border: "1px dashed #c7d2fe", borderRadius: 12, padding: "16px 18px", marginTop: 14 }}>
+                  <div style={{ fontSize: 11, color: "#6366f1", fontWeight: 700, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 10 }}>
+                    📚 Save this answer to your Story Bank
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <select value={storyClaim} onChange={(e) => setStoryClaim(e.target.value)} style={{ flex: 1, minWidth: 260, padding: "9px 12px", borderRadius: 8, border: "1px solid #e8eaf4", background: "#fafbff", fontSize: 12, color: "#374151", fontFamily: "inherit" }}>
+                      <option value="">Which resume claim does this story prove? (optional)</option>
+                      {claims.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                    </select>
+                    <button onClick={handleSaveStory} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {storySaved ? "✅ Saved" : "💾 Save story"}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 8, lineHeight: 1.5 }}>
+                    Every number on your resume is a claim an interviewer will probe. The Story Bank tab shows which claims still have no rehearsed story.
+                  </p>
+                </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ══════════════════════════════
+            MODE: STORY BANK
+        ══════════════════════════════ */}
+        {activeMode === "stories" && (
+          <div>
+            <div style={{ background: "#ffffff", border: "1px solid #e8eaf4", borderRadius: 14, padding: "20px 24px", marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12 }}>
+                Claim Coverage — every resume number needs a rehearsed story
+              </div>
+              {claims.length === 0 ? (
+                <p style={{ fontSize: 12.5, color: "#9ca3af", lineHeight: 1.6 }}>
+                  No base resume found. Save your resume in the Resume Tailor ("Save as base") and your quantified claims will appear here.
+                </p>
+              ) : (
+                claims.map((c, i) => {
+                  const covered = stories.some((s) => s.claim === c);
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0", borderBottom: "1px solid #f7f8fc" }}>
+                      <span style={{ fontSize: 13, flexShrink: 0 }}>{covered ? "✅" : "⭕"}</span>
+                      <span style={{ fontSize: 12.5, color: covered ? "#374151" : "#9ca3af", lineHeight: 1.5 }}>{c}</span>
+                      {!covered && <span style={{ fontSize: 10.5, color: "#d97706", fontWeight: 700, flexShrink: 0, marginLeft: "auto" }}>NO STORY YET</span>}
+                    </div>
+                  );
+                })
+              )}
+              <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 10, lineHeight: 1.5 }}>
+                To cover a claim: go to Answer Grader, practice a story that proves it, and save it with that claim selected.
+              </p>
+            </div>
+
+            <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 12 }}>
+              Saved Stories ({stories.length})
+            </div>
+            {stories.length === 0 && (
+              <div style={{ background: "#ffffff", border: "1px dashed #e8eaf4", borderRadius: 14, padding: "24px", textAlign: "center", fontSize: 12.5, color: "#9ca3af" }}>
+                No stories saved yet. Grade an answer in Answer Grader, then hit "Save story".
+              </div>
+            )}
+            {stories.map((s) => (
+              <div key={s.id} style={{ background: "#ffffff", border: "1px solid #e8eaf4", borderRadius: 14, padding: "16px 20px", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: "#111328", marginBottom: 4 }}>{s.title}</div>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>
+                      {s.date}{s.score ? ` · scored ${s.score}` : ""}{s.competency ? ` · ${s.competency}` : ""}
+                    </div>
+                    {s.claim && <div style={{ fontSize: 11.5, color: "#6366f1", marginBottom: 6 }}>Proves: {s.claim}</div>}
+                    <p style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.6 }}>{s.answer.slice(0, 220)}{s.answer.length > 220 ? "..." : ""}</p>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                    <button onClick={() => copyText(s.answer, `story-${s.id}`)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #e8eaf4", background: "transparent", color: "#6b7280", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      {copied === `story-${s.id}` ? "✅" : "📋 Copy"}
+                    </button>
+                    <button onClick={() => setStories(deleteStory(s.id))} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #fecdd3", background: "transparent", color: "#e11d48", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      ✕ Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

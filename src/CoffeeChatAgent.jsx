@@ -1,9 +1,34 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 // ─────────────────────────────────────────────────────────────────
 // 🔑 YOUR API KEY
 // ─────────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+// All API calls go through the serverless proxy — key never in the browser
+const API_URL = "/api/claude";
+// LOCAL DEV FALLBACK: with REACT_APP_ANTHROPIC_KEY in .env, plain `npm start`
+// works. In Vercel, DELETE that env var so production uses the proxy.
+const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
+const apiHeaders = () =>
+  DEV_KEY
+    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
+    : { "Content-Type": "application/json" };
+
+// ── SHARED CONTACTS STORE — read by Cover Letter & Resume Tailors ──
+const CONTACTS_KEY = "jobsuite_contacts";
+function loadContacts() {
+  try { return JSON.parse(localStorage.getItem(CONTACTS_KEY)) || []; } catch { return []; }
+}
+function saveContact(contact) {
+  const all = [contact, ...loadContacts()].slice(0, 50);
+  try { localStorage.setItem(CONTACTS_KEY, JSON.stringify(all)); } catch {}
+  return all;
+}
+function deleteContact(id) {
+  const all = loadContacts().filter((c) => c.id !== id);
+  try { localStorage.setItem(CONTACTS_KEY, JSON.stringify(all)); } catch {}
+  return all;
+}
 
 // ─────────────────────────────────────────────────────────────────
 // SYSTEM PROMPT — Coffee Chat Prep
@@ -148,14 +173,9 @@ async function fetchYouTubeTranscript(videoId) {
 
 // Fetch URL content via Claude's fetch capability (Anthropic API url_fetch)
 async function fetchUrlContent(url) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(apiUrl(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
       max_tokens: 2000,
@@ -189,9 +209,6 @@ function safeParseJSON(raw) {
 // MAIN CLAUDE CALL
 // ─────────────────────────────────────────────────────────────────
 async function callClaude(inputs, contextSections) {
-  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === "YOUR_API_KEY_HERE") {
-    throw new Error("API_KEY_MISSING");
-  }
   const { personName, personRole, company, personType, background } = inputs;
 
   const contextBlock = contextSections.length > 0
@@ -209,14 +226,9 @@ ${contextBlock}
 CANDIDATE BACKGROUND:
 ${background}`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(apiUrl(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
       max_tokens: 4000,
@@ -334,6 +346,32 @@ export default function CoffeeChatAgent() {
   const [error, setError]                 = useState("");
   const [activeSection, setActiveSection] = useState("opener");
   const [copied, setCopied]               = useState("");
+
+  // Chat log — post-chat capture that feeds the Cover Letter stories box
+  const [contacts, setContacts]           = useState([]);
+  const [logQuote, setLogQuote]           = useState("");
+  const [logLearned, setLogLearned]       = useState("");
+  const [logNext, setLogNext]             = useState("");
+  const [logSaved, setLogSaved]           = useState(false);
+
+  useEffect(() => { setContacts(loadContacts()); }, []);
+
+  function handleLogChat() {
+    if (!personName.trim() || !company.trim()) return;
+    setContacts(saveContact({
+      id: Date.now(),
+      name: personName.trim(),
+      role: personRole.trim(),
+      company: company.trim(),
+      quote: logQuote.trim(),
+      learned: logLearned.trim(),
+      next: logNext.trim(),
+      date: new Date().toISOString().slice(0, 10),
+    }));
+    setLogQuote(""); setLogLearned(""); setLogNext("");
+    setLogSaved(true);
+    setTimeout(() => setLogSaved(false), 3000);
+  }
   const resultRef = useRef(null);
 
   // ── FETCH URL CONTENT ──
@@ -408,11 +446,7 @@ export default function CoffeeChatAgent() {
       setActiveSection("opener");
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (e) {
-      if (e.message === "API_KEY_MISSING") {
-        setError("API key missing — paste your key into ANTHROPIC_API_KEY at line 6.");
-      } else {
-        setError(`Error: ${e.message}`);
-      }
+      setError(`Error: ${e.message}`);
     }
     setProgressMsg("");
     setLoading(false);
@@ -705,6 +739,56 @@ export default function CoffeeChatAgent() {
             ? `☕  ${progressMsg || "Generating..."}`
             : `☕  Generate Coffee Chat Brief${contextCount > 0 ? ` — ${contextCount} Context Source${contextCount > 1 ? "s" : ""} Loaded` : ""}`}
         </button>
+
+        {/* ── CHAT LOG — capture what you learned, feeds the Cover Letter ── */}
+        <div style={{ background: "#ffffff", border: "1px solid #e8eaf4", borderRadius: 14, padding: "18px 22px", marginTop: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>
+              After the chat — log it ({contacts.length} contacts saved)
+            </div>
+            {logSaved && <span style={{ fontSize: 12, color: "#059669", fontWeight: 700 }}>Saved — the Cover Letter agent will surface this contact automatically</span>}
+          </div>
+          <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 14, lineHeight: 1.6 }}>
+            Fill the person and company fields above, then capture the chat here. Saved contacts appear in the Cover Letter agent when you apply to their company, and the Resume Tailors will remind you to ask for a referral.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Worth quoting — what they said</label>
+              <textarea value={logQuote} onChange={(e) => setLogQuote(e.target.value)} rows={3} placeholder='e.g. "We look for consultants who can own the room"' style={{ width: "100%", background: "#fafbff", border: "1px solid #e8eaf4", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.6, color: "#111328" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>What you learned</label>
+              <textarea value={logLearned} onChange={(e) => setLogLearned(e.target.value)} rows={3} placeholder="Team priorities, culture, what they value..." style={{ width: "100%", background: "#fafbff", border: "1px solid #e8eaf4", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.6, color: "#111328" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 6 }}>Agreed next step</label>
+              <textarea value={logNext} onChange={(e) => setLogNext(e.target.value)} rows={3} placeholder="e.g. Intro to their PM lead; follow up in 2 weeks" style={{ width: "100%", background: "#fafbff", border: "1px solid #e8eaf4", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.6, color: "#111328" }} />
+            </div>
+          </div>
+          <button
+            onClick={handleLogChat}
+            disabled={!personName.trim() || !company.trim()}
+            style={{ padding: "10px 22px", borderRadius: 10, border: "none", background: personName.trim() && company.trim() ? "#2563eb" : "#e8eaf4", color: personName.trim() && company.trim() ? "#fff" : "#9ca3af", fontSize: 12.5, fontWeight: 700, cursor: personName.trim() && company.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}
+          >
+            💾 Save chat with {personName.trim() || "..."} to contacts
+          </button>
+
+          {contacts.length > 0 && (
+            <div style={{ marginTop: 18, borderTop: "1px solid #f0f1fa", paddingTop: 14 }}>
+              {contacts.map((c) => (
+                <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid #f7f8fc" }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: "#111328" }}>{c.name}</span>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}> — {c.role ? c.role + ", " : ""}{c.company} · {c.date}</span>
+                    {c.quote && <p style={{ fontSize: 11.5, color: "#6b7280", fontStyle: "italic", marginTop: 2 }}>"{c.quote}"</p>}
+                    {c.next && <p style={{ fontSize: 11, color: "#2563eb", marginTop: 2 }}>→ {c.next}</p>}
+                  </div>
+                  <button onClick={() => setContacts(deleteContact(c.id))} style={{ border: "none", background: "transparent", color: "#e11d48", cursor: "pointer", fontSize: 13 }} title="Delete">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* ── RESULTS ── */}
         {result && (

@@ -1,235 +1,441 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { Document, Packer, Paragraph, TextRun, AlignmentType } from "docx";
 
 // ─────────────────────────────────────────────────────────────────
-// 🔑 YOUR API KEY
+// COVER LETTER AGENT v4.0 — Sunny
+// - Dymax letter = the format & content gold standard (embedded below)
+// - McKinsey letter techniques = the storytelling enhancement layer
+// - REAL web search for company news (no more hallucinated research)
+// - "Stories & Context" input: your role-specific material gets woven in
+// - 3 versions varying EMPHASIS: Ops-led / Product-led / Narrative-led
+// - Delimiter output format — no fragile JSON with long strings
+// - All API calls via /api/claude proxy (key never in the browser)
 // ─────────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+const API_URL = "/api/claude";
+// ── LOCAL DEV FALLBACK ──
+// If REACT_APP_ANTHROPIC_KEY exists in your local .env, the app calls the
+// Anthropic API directly so plain `npm start` works (no `vercel dev` needed).
+// IMPORTANT: in Vercel, DELETE the REACT_APP_ANTHROPIC_KEY env variable —
+// production must use the proxy, or the key gets baked into the public bundle.
+const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
+const apiHeaders = () =>
+  DEV_KEY
+    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
+    : { "Content-Type": "application/json" };
+const HISTORY_KEY = "coverletter_sunny_history";
+const BASE_RESUME_KEY = "tailor_sunny_base_resume"; // shared with Resume Tailor
+const CONTACTS_KEY = "jobsuite_contacts"; // written by the Coffee Chat agent
+const RESUME_SLOTS_KEY = "resume_slots_sunny"; // managed in the Resume Tailor
 
-// ─────────────────────────────────────────────────────────────────
-// SYSTEM PROMPT — Agent 3 v2
-// Full Cheat Sheet + MongoDB Format Instruction Set
-// ─────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a senior hiring strategist and executive ghostwriter who has reviewed thousands of cover letters from both sides of the table. You write cover letters that get callbacks. You do not write cover letters that sound like cover letters.
+function loadResumeSlots() {
+  try { return (JSON.parse(localStorage.getItem(RESUME_SLOTS_KEY)) || []).filter(Boolean); } catch { return []; }
+}
 
-════════════════════════════════════════════
-CANDIDATE CONTEXT
-════════════════════════════════════════════
-International MBA student at Fordham University, Gabelli School of Business, 
-Class of 2027. Approximately 10 years of experience in operations, program 
-management, and product management. No US brand-name employer pedigree. 
-The cover letter must reframe international experience as directly transferable, 
-not foreign. Lead with impact, not apology.
+function loadContacts() {
+  try { return JSON.parse(localStorage.getItem(CONTACTS_KEY)) || []; } catch { return []; }
+}
+function contactStoryLine(c) {
+  let line = `I spoke with ${c.name}${c.role ? ", " + c.role : ""} at ${c.company}`;
+  if (c.quote) line += `, who told me: "${c.quote}"`;
+  line += ".";
+  if (c.learned) line += ` What I took away: ${c.learned}`;
+  return line;
+}
 
-════════════════════════════════════════════
-BEFORE YOU WRITE — DO THESE TWO THINGS FIRST
-════════════════════════════════════════════
-1. RESEARCH: Search for one recent news item about the company from the last 
-   90 days. Identify one specific concrete detail: a product launch, a 
-   partnership, a strategic announcement, a leadership change. You will use 
-   this in the closing paragraph. If no recent news is found, pull one 
-   specific operational or strategic detail from the company website that is 
-   NOT their generic mission statement.
+// Defaults for the letter header — editable in the UI
+const DEFAULTS = {
+  name: "Sunny Bhargava",
+  phone: "+1 (551) 998-5759",
+  email: "sb299@fordham.edu",
+  linkedin: "linkedin.com/in/bhargavasunny",
+};
 
-2. SKEPTIC CHECK: What is the recruiter's single biggest skeptical question 
-   about this candidate for this role? Write your hook to answer that question 
-   before the recruiter can ask it. Common skeptical questions: Is this person 
-   overqualified? Are they pivoting with no relevant background? Is their 
-   experience actually transferable? Answer it in sentence one.
+const CANDIDATE_CONTEXT = `International MBA candidate at Fordham University, Gabelli School of Business, Class of 2027. ~10 years across product management, program management, and operations: Livguard (Product Manager — scaled subscription platform 200→11,000 users, 12% revenue growth, PRDs, roadmaps, IoT/QR tooling), Tata Hitachi (Regional Manager — 20% breakdown reduction, 8% cost cut via IoT deployment, 60+ field personnel), OYO (Operations Manager — 80 properties), Gainwell (Project Lead — $0.5M monthly savings, 24-person team, mining fleet MRC). B.Tech Mechanical Engineering, IIT-ISM Dhanbad. Builds AI-powered workflow tools (Python, React, Anthropic API) including a documentation tool cutting drafting time 90%. International experience = scale and complexity, never a liability. Never fabricate anything not present in the background or resume provided.`;
 
-════════════════════════════════════════════
-STRUCTURE — 3 paragraphs, built from these 6 elements
-════════════════════════════════════════════
-The 6 elements below are the building blocks. They do NOT map one-to-one 
-to sentences or paragraphs. Weave them into 3 flowing paragraphs as shown.
+// The user's real, proven letter — this IS the standard
+const GOLD_STANDARD = `I am a first-year MBA Candidate at Fordham University's Gabelli School of Business (Class of 2027) with ten years of experience in product management, new product introduction, and full product lifecycle execution, and I am applying for the Product Management Intern role at Dymax. Dymax's customer-intimate model, tailoring solutions rather than supplying standard products, is a product philosophy I recognize and respect: it requires deeper knowledge of customer use cases, more rigorous technical documentation, and a product team that understands both the commercial and operational dimensions of what they are bringing to market. My background is in exactly that kind of B2B product environment, and the NPI and lifecycle work this internship covers maps directly onto what I have been doing.
 
-ELEMENT 1 — HOOK (opens paragraph 1)
-The core tension, insight, or problem that makes this role genuinely 
-interesting. The recruiter should recognize their own world in sentence one 
-before they know anything about the candidate. If the candidate is 
-overqualified, pivoting, or international, address it directly here. 
-A clear honest reason is stronger than pretending the mismatch does not exist.
-NEVER open with: interest statement, school name, degree, or years of experience.
-NEVER open with: "I am excited / pleased / eager / happy to apply."
+My most relevant experience is leading new product introduction at Livguard Drivetrain, where I managed the complete product lifecycle from discovery through launch and post-launch performance management. I authored the full PRD and technical documentation suite, coordinated product testing requirements across engineering and operations stakeholders, built the launch training and communications materials that enabled commercial adoption, and tracked product performance data post-launch to inform lifecycle decisions. At Tata Hitachi Construction Machinery, I worked within a global B2B industrial environment managing the deployment of a complex technical product platform, which required maintaining rigorous documentation standards, managing cross-functional workflows across engineering, operations, and commercial teams, and translating technical product capabilities into clear business-facing communications.
 
-ELEMENT 2 — MISSION RELEVANCE (closes paragraph 1)
-1 to 2 sentences connecting the company's specific strategic direction to the 
-candidate's career goals. Use the recent news item or specific company detail 
-found in research. Never recite their mission statement back to them. 
-Show you understand what they are trying to do and why that matters to you 
-professionally.
+My data analysis and process automation capabilities reinforce the workflow improvement and reporting work this role involves. I have built quantitative models that analyze product performance data across sales, operational, and customer dimensions, and have experience translating that analysis into clear recommendations for product management decision-making. On the automation side, I have hands-on experience building AI-powered workflow tools using Python and the OpenAI API that convert manual, high-friction processes into structured, low-overhead systems.
 
-ELEMENT 3 — PROOF (all of paragraph 2 — this is the core)
-Highlight applicable skills, experience, and specific achievements that 
-directly match the JD requirements. Rules:
-- Every claim must be grounded in the candidate's actual background
-- Use real numbers, real scale, real outcomes
-- Reference at least 2 specific JD requirements explicitly
-- Embed at least 2 JD keywords naturally
-- Include at least 1 quantified achievement
-- Frame international experience as global complexity, cross-cultural 
-  leadership, emerging market operations — never apologize for it
-- Never use: "strong communication skills", "proven track record", 
-  "passionate about", "results-driven", "detail-oriented", "fast learner", 
-  "team player", "go-getter", "synergy", "great fit"
+For Dymax's Product Management team, I would contribute directly across the core responsibilities this internship describes:
+• Technical documentation: reviewing and creating technical documentation across all aspects of the product lifecycle, drawing on direct experience authoring production-quality product documentation.
+• Workflow review and automation: auditing current routing workflows to identify inefficiencies, applying hands-on experience building AI-powered process automation tools.
+• Cross-functional coordination and presentations: supporting product managers across testing coordination and project deliverables, with the structured communication discipline built across ten years of stakeholder-facing PM work.
 
-ELEMENT 4 — FIT SUMMARY (opens paragraph 3)
-1 to 2 sentences. Direct and confident. No hedging. No "I believe I would be."
+Thank you for your consideration. I look forward to the opportunity to discuss how my background in NPI execution, product lifecycle management, and process automation can contribute to Dymax's Product Management team this summer.`;
 
-ELEMENT 5 — IDENTITY AND CREDENTIALS (paragraph 3)
-State MBA, school, class year, and relevant academic grounding here only. 
-Never in paragraph 1 or 2. Credentials are supporting evidence, not the lead.
+const SYSTEM_PROMPT = `You are a senior hiring strategist and executive ghostwriter writing cover letters for the candidate below. You write letters that get callbacks — dense with specific, verifiable substance, zero filler.
 
-ELEMENT 6 — CLOSING (closes paragraph 3)
-One direct sentence restating interest and inviting a conversation. 
-Include relocation availability and work authorization if relevant. 
-No over-thanking.
+CANDIDATE CONTEXT:
+${CANDIDATE_CONTEXT}
 
 ════════════════════════════════════════════
-FORMAT — match exactly every time
+GOLD-STANDARD LETTER — match this format, density, and voice exactly
 ════════════════════════════════════════════
+This is the candidate's proven letter. Every letter you write follows its structure:
 
-[CANDIDATE FULL NAME in bold]
-[Phone] | [Email] | [LinkedIn URL]
+${GOLD_STANDARD}
 
-[Today's Date — Month DD, YYYY]
+STRUCTURAL BLUEPRINT (from the gold standard):
+1. OPENING PARAGRAPH — one sentence identifying the candidate (MBA at Fordham Gabelli, years of experience in the relevant domain) plus the exact role applied for. Then a company-specific observation showing genuine understanding of THEIR business model or strategic situation, connected back to the candidate's background. Never recite their mission statement. Never generic praise.
+2. CORE EXPERIENCE PARAGRAPH — the single most relevant experience, deep and specific: what was owned, built, coordinated, and measured. Map it explicitly to what the role covers.
+3. SECONDARY CAPABILITY PARAGRAPH — the reinforcing skillset (analytics, AI tool-building, program governance — whichever fits the JD), tied to concrete role responsibilities.
+4. CONTRIBUTION BULLETS — "For [Company]'s [team name] team, I would contribute directly across the core responsibilities this role describes:" followed by 2-4 bullets. Each bullet: "• [Label pulled from the JD's actual responsibilities]: [one sentence grounding it in the candidate's experience]".
+5. CLOSING — thank you plus one forward-looking sentence naming the candidate's specific capabilities. No over-thanking.
 
-[Hiring Manager Name OR "Hiring Manager"]
-[Company Name]
-[Department if provided]
-
-Position- [Exact Role Title as it appears in JD]
-[Req ID if provided]
-
-Dear [Hiring Manager Name OR "Hiring Manager"],
-
-[3 paragraphs — Elements 1 through 6 woven in as above]
-
-Sincerely,
-
-[Candidate Name]
+ENHANCEMENT TECHNIQUES (from the candidate's McKinsey letter — use when material supports them):
+- Story arc: a real experience told as narrative — situation, action, quantified result, durable lesson (e.g. the e-rickshaw battery story ending in "solutions that last emerge from the intersection of rigorous analysis and genuine empathy")
+- Operator positioning: "These were not advisory roles. I was the operator accountable for execution."
+- Networking conversations: if the user's STORIES & CONTEXT mentions a real conversation with an employee, weave it in with the person's name and what it revealed about the firm
+- Firm-specific language: if the user provides firm frameworks or values, use them precisely, never generically
 
 ════════════════════════════════════════════
-WORD LIMIT
+SKEPTIC CHECK — mandatory, before writing anything
 ════════════════════════════════════════════
-Body only (header and closing not counted): 300 to 380 words per version. 
-Never exceed 400. Tighter is stronger.
+Identify the recruiter's single biggest skeptical question about this candidate for THIS role, and answer it inside the opening paragraph, before they can ask it. For this candidate the default doubt is: "Why does someone with 10 years of experience want this role — and will he stay?" Answer through confident framing: deliberate repositioning (engineering to operations to product at scale, now the US market via the MBA), a specific reason this role is the logical next step — never defensiveness, never naming the doubt out loud ("you may wonder..."). If the JD suggests a different primary doubt (domain switch, seniority mismatch, no US experience), answer that one instead. Report the doubt you identified in meta as skeptic_question.
 
 ════════════════════════════════════════════
-HARD RULES — never break
+RESEARCH — real search, never invented
 ════════════════════════════════════════════
-- Never open with interest statement, school, or degree
-- Never use "passionate about" anywhere
+- If ADDITIONAL DETAILS includes a COMPANY DETAIL provided by the user: use it, do NOT search.
+- Otherwise: use web_search to find ONE recent (last 90 days), specific, concrete item about the company — product launch, partnership, strategic announcement, expansion, leadership change. Weave it into the opening or closing paragraph naturally.
+- If search returns nothing specific and recent: use a concrete operational detail from the JD itself and report news_item_used as "NONE FOUND — used JD detail". NEVER invent or approximate a news item. A letter with no news beats a letter with fake news.
+- If no hiring manager name was provided by the user: spend ONE web_search attempting to find the actual hiring manager, team lead, or recruiter name for this role or team. Use a name ONLY if you actually found it and are confident it is current. Report it in meta as hiring_manager_found (or NONE). If none found, use "Hiring Manager".
+
+════════════════════════════════════════════
+STORIES & CONTEXT — priority material
+════════════════════════════════════════════
+If the user supplies role-specific stories, conversation notes, or points, they are PRIORITY content: work them in naturally where they are strongest (Version 3 leans on them hardest). Preserve names, numbers, and specific phrasing. Do not pad them into clichés.
+
+HARD RULES:
+- Never use: "passionate about", "proven track record", "strong communication skills", "results-driven", "detail-oriented", "fast learner", "team player", "go-getter", "synergy", "great fit", "I am excited to apply"
+- Never fabricate achievements, metrics, skills, or news
 - Never summarize the company's mission back to them
-- Never fabricate achievements, metrics, or skills not in the background
-- Never use em dashes, semicolons, or hyphens used as dashes
-- Never use generic company facts from their About page
-- Must embed at least 2 specific JD keywords naturally
-- Must reference at least 1 quantified achievement from candidate background
-- International background = asset, never liability
-- Salutation: "Dear [Name]," — never "To Whom It May Concern"
-- Closing: "Sincerely," — always
-- Req ID: include in header if provided
-- Hiring manager name: use throughout if provided
+- PUNCTUATION: never use em dashes (—), en dashes (–), or hyphens as sentence punctuation. Never use semicolons. Restructure with commas, periods, or two separate sentences instead. Hyphens inside compound words (cross-functional, post-launch, B2B) are fine.
+- GRAMMAR: every sentence must be grammatically complete and correctly structured. Subject and verb in every sentence. No fragments, no run-ons, no comma splices. Consistent tense within each paragraph. Re-read each paragraph before finalizing and fix anything a careful editor would flag.
+- Body length 380-500 words, never exceed 550. Dense beats long.
+- Salutation "Dear [Hiring Manager Name]," or "Dear Hiring Manager," — never "To Whom It May Concern"
+- Sign off "Sincerely," then the candidate's name
+- At least 2 JD keywords woven naturally; at least 1 quantified achievement
 
 ════════════════════════════════════════════
-OUTPUT — generate exactly 3 versions
+OUTPUT — exactly 3 versions, SAME structure, different EMPHASIS
 ════════════════════════════════════════════
-All 3 versions follow the same structure and format.
-They differ in tone, proof emphasis, and how the hook is framed.
+VERSION 1 — OPS & DELIVERY LEAD: core paragraph leads with operations/program delivery depth (Tata Hitachi, Gainwell, governance, scale, cost outcomes). Best when the JD is program/ops/consulting flavored.
+VERSION 2 — PRODUCT & BUILDER LEAD: core paragraph leads with product wins and AI tool-building (Livguard platform scaling, PRDs, automation tools). Best when the JD is product/tech flavored.
+VERSION 3 — NARRATIVE & MISSION LEAD: opens or supports with a story arc told McKinsey-letter style, weaves the user's supplied stories/conversations most prominently, connects to the company's direction. Best for mission-driven, consulting, or relationship-heavy applications.
 
-Version A — PROFESSIONAL AND DIRECT
-Tone: Formal, precise, confident, zero fluff.
-Hook framing: Lead with the operational or analytical problem the role solves.
-Proof emphasis: Governance, program management, operational rigor.
-Best for: Corporate, finance, consulting, large enterprise roles.
+Do NOT write the header block (name, contact, date, recipient) — it is added automatically. Each version starts at "Dear ..." and ends after "Sincerely," and the candidate's name.
 
-Version B — CONFIDENT AND BOLD
-Tone: Results-first, direct, high-performer energy.
-Hook framing: Lead with a metric or outcome that reframes the candidate's 
-background immediately.
-Proof emphasis: Scale, speed of execution, builder mindset, quantified impact.
-Best for: Startups, PM roles, tech companies, high-growth environments.
+RESPOND IN EXACTLY THIS PLAIN-TEXT FORMAT — no JSON, no markdown fences, no commentary outside the markers:
 
-Version C — WARM AND STRATEGIC
-Tone: Human, thoughtful, shows understanding of the organization's challenges.
-Hook framing: Lead with the strategic tension or market shift that makes 
-this role important right now.
-Proof emphasis: Mission alignment, stakeholder impact, cross-cultural 
-complexity as a strength.
-Best for: Mission-driven organizations, sustainability, nonprofits, 
-social impact, international roles.
+<<<META>>>
+company: [company name from JD]
+role: [exact role title from JD]
+team: [team/department name from JD, or General]
+news_item_used: [the specific item used, "MANUAL: ..." if user-provided, or "NONE FOUND — used JD detail"]
+skeptic_question: [the biggest recruiter doubt you identified and answered]
+hiring_manager_found: [name you found via search, name the user provided, or NONE]
+keyword_hits: [keyword1; keyword2; keyword3]
+recommended_version: [1, 2, or 3]
+recommended_reason: [one direct sentence]
+<<<VERSION 1>>>
+Dear ...,
+[letter body]
+Sincerely,
+${DEFAULTS.name}
+<<<VERSION 2>>>
+...
+<<<VERSION 3>>>
+...
+<<<SHORT VERSION>>>
+[A 120-150 word EMAIL-BODY version of whichever version you recommended: starts "Dear ...," — three short paragraphs maximum: (1) identity line that answers the skeptic question, (2) the single strongest proof point with one number, (3) direct ask for a conversation. No header block, no contribution bullets. This is for recruiters who read applications inside an email client in fifteen seconds. Ends "Sincerely," and the candidate name.]
+<<<END>>>`;
 
-════════════════════════════════════════════
-METADATA — output after the 3 versions
-════════════════════════════════════════════
-keyword_hits: JD keywords naturally embedded across versions
-achievement_used: the primary quantified achievement anchoring paragraph 2
-news_item_used: the specific recent detail used in paragraph 3
-strongest_version: A, B, or C
-strongest_reason: one direct sentence explaining why for this specific JD
+// ─────────────────────────────────────────────────────────────────
+// API + PARSING
+// ─────────────────────────────────────────────────────────────────
+async function callClaude(userMessage) {
+  const response = await fetch(apiUrl(), {
+    method: "POST",
+    headers: apiHeaders(),
+    body: JSON.stringify({
+      model: "claude-opus-4-8",
+      max_tokens: 8000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userMessage }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error?.message || "API error");
+  // Web search responses contain multiple block types — keep only text
+  return (data.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+}
 
-════════════════════════════════════════════
-RESPOND ONLY IN THIS EXACT JSON — no preamble, no markdown fences:
-════════════════════════════════════════════
-{
-  "company_name": "from JD",
-  "role_title": "exact title from JD",
-  "hiring_manager": "name if provided, else Hiring Manager",
-  "req_id": "if provided, else null",
-  "department": "if provided, else null",
-  "keyword_hits": ["keyword1", "keyword2"],
-  "achievement_used": "The specific achievement used in proof paragraph",
-  "news_item_used": "The specific recent detail used in paragraph 3",
-  "strongest_version": "A",
-  "strongest_reason": "One direct sentence on why this version fits this JD best",
-  "versions": {
-    "A": {
-      "label": "Professional & Direct",
-      "best_for": "Corporate, Finance, Consulting",
-      "word_count": 340,
-      "body": "FULL FORMATTED COVER LETTER including header block, date, recipient block, position line, salutation, all paragraphs, and closing. Use \\n for line breaks."
-    },
-    "B": {
-      "label": "Confident & Bold",
-      "best_for": "Startups, PM Roles, Tech",
-      "word_count": 320,
-      "body": "FULL FORMATTED COVER LETTER"
-    },
-    "C": {
-      "label": "Warm & Strategic",
-      "best_for": "Mission-Driven, Sustainability, Nonprofits",
-      "word_count": 355,
-      "body": "FULL FORMATTED COVER LETTER"
+function parseResponse(raw) {
+  const sections = {};
+  const re = /<<<([^>]+)>>>/g;
+  const markers = [];
+  let m;
+  while ((m = re.exec(raw)) !== null) markers.push({ name: m[1].trim().toUpperCase(), end: re.lastIndex, start: m.index });
+  for (let i = 0; i < markers.length; i++) {
+    const body = raw.slice(markers[i].end, i + 1 < markers.length ? markers[i + 1].start : raw.length).trim();
+    sections[markers[i].name] = body;
+  }
+  if (!sections["VERSION 1"]) throw new Error("Response format unexpected — re-run generation.");
+
+  const meta = {};
+  (sections["META"] || "").split("\n").forEach((line) => {
+    const idx = line.indexOf(":");
+    if (idx === -1) return;
+    meta[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+  });
+
+  const versions = [
+    { id: 1, label: "Ops & Delivery Lead", body: sections["VERSION 1"] || "" },
+    { id: 2, label: "Product & Builder Lead", body: sections["VERSION 2"] || "" },
+    { id: 3, label: "Narrative & Mission Lead", body: sections["VERSION 3"] || "" },
+  ];
+  if (sections["SHORT VERSION"]) {
+    versions.push({ id: 4, label: "Short Email (120-150w)", body: sections["SHORT VERSION"], isShort: true });
+  }
+  return { meta, versions };
+}
+
+// Header block assembled deterministically — exact Dymax format every time
+function buildHeaderLines(fields, meta) {
+  const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const lines = [
+    { text: fields.name.toUpperCase(), style: "name" },
+    { text: `${fields.phone} | ${fields.email} | ${fields.linkedin}`, style: "contact" },
+    { text: "", style: "blank" },
+    { text: today, style: "normal" },
+    { text: "", style: "blank" },
+    { text: fields.hiringManager || (meta.hiring_manager_found && !/^none$/i.test(meta.hiring_manager_found) ? meta.hiring_manager_found : "Hiring Manager"), style: "normal" },
+    { text: meta.company || fields.company || "", style: "normal" },
+  ];
+  if (fields.companyLocation) lines.push({ text: fields.companyLocation, style: "normal" });
+  if (fields.companyDept) lines.push({ text: fields.companyDept, style: "normal" });
+  lines.push({ text: "", style: "blank" });
+  lines.push({
+    text: `Position - ${meta.role || "the role"}${fields.reqId ? ` (Job ID: ${fields.reqId})` : ""}`,
+    style: "normal",
+  });
+  lines.push({ text: "", style: "blank" });
+  return lines.filter((l) => l.style === "blank" || l.text);
+}
+
+function fullLetterText(headerLines, body) {
+  return headerLines.map((l) => l.text).join("\n") + "\n" + body;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// DOCX EXPORT — Times New Roman 11pt, matches the Dymax letter file
+// ─────────────────────────────────────────────────────────────────
+function buildLetterDocx(headerLines, body) {
+  const F = "Times New Roman";
+  const children = [];
+
+  headerLines.forEach((l) => {
+    if (l.style === "name") {
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [new TextRun({ text: l.text, bold: true, size: 32, font: F })],
+          spacing: { after: 40 },
+        })
+      );
+    } else if (l.style === "contact") {
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [new TextRun({ text: l.text, size: 22, font: F })],
+          spacing: { after: 120 },
+        })
+      );
+    } else if (l.style === "blank") {
+      children.push(new Paragraph({ children: [], spacing: { after: 60 } }));
+    } else {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: l.text, size: 22, font: F })],
+          spacing: { after: 20 },
+        })
+      );
     }
-  }
-}`;
+  });
+
+  body.split(/\n\s*\n/).forEach((para) => {
+    const lines = para.split("\n");
+    lines.forEach((line) => {
+      const t = line.trim();
+      if (!t) return;
+      if (t.startsWith("•")) {
+        // Bold the label before the colon in contribution bullets
+        const rest = t.replace(/^•\s*/, "");
+        const ci = rest.indexOf(":");
+        const runs =
+          ci > 0 && ci < 60
+            ? [
+                new TextRun({ text: rest.slice(0, ci + 1), bold: true, size: 22, font: F }),
+                new TextRun({ text: rest.slice(ci + 1), size: 22, font: F }),
+              ]
+            : [new TextRun({ text: rest, size: 22, font: F })];
+        children.push(new Paragraph({ children: runs, bullet: { level: 0 }, spacing: { after: 60 } }));
+      } else {
+        children.push(
+          new Paragraph({
+            children: [new TextRun({ text: t, size: 22, font: F })],
+            spacing: { after: lines.length === 1 ? 160 : 40 },
+          })
+        );
+      }
+    });
+  });
+
+  const doc = new Document({
+    sections: [{ properties: { page: { margin: { top: 720, bottom: 720, left: 720, right: 720 } } }, children }],
+  });
+  return Packer.toBlob(doc);
+}
+
+async function downloadLetterDocx(headerLines, body, filenameBase) {
+  const blob = await buildLetterDocx(headerLines, body);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filenameBase}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 // ─────────────────────────────────────────────────────────────────
-// API CALL
+// HISTORY
 // ─────────────────────────────────────────────────────────────────
-async function callClaude(inputs) {
-  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === "YOUR_API_KEY_HERE") {
-    throw new Error("API_KEY_MISSING");
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; }
+}
+function saveHistoryEntry(entry) {
+  const h = [entry, ...loadHistory()].slice(0, 20);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch {}
+  return h;
+}
+function setHistoryStatus(id, status) {
+  const h = loadHistory().map((x) => (x.id === id ? { ...x, status } : x));
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch {}
+  return h;
+}
+function deleteHistoryEntry(id) {
+  const h = loadHistory().filter((x) => x.id !== id);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch {}
+  return h;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// UI HELPERS
+// ─────────────────────────────────────────────────────────────────
+function Card({ children, style = {} }) {
+  return (
+    <div style={{ background: "#ffffff", border: "1px solid #dde0f0", borderRadius: 14, padding: "20px 22px", ...style }}>
+      {children}
+    </div>
+  );
+}
+
+function Pill({ word, variant = "default" }) {
+  const variants = {
+    default: { bg: "#dde0f0", color: "#888baa", border: "#ccd0e8" },
+    green: { bg: "#00d4aa12", color: "#00d4aa", border: "#00d4aa40" },
+    blue: { bg: "#0099ff12", color: "#0099ff", border: "#0099ff40" },
+    yellow: { bg: "#f5a62312", color: "#f5a623", border: "#f5a62340" },
+  };
+  const v = variants[variant] || variants.default;
+  return (
+    <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 11, background: v.bg, color: v.color, border: `1px solid ${v.border}`, fontFamily: "'DM Mono', monospace", display: "inline-block", margin: 2 }}>
+      {word}
+    </span>
+  );
+}
+
+function wordCount(s) {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MAIN COMPONENT
+// ─────────────────────────────────────────────────────────────────
+export default function CoverLetterAgent() {
+  const [jd, setJd] = useState("");
+  const [background, setBackground] = useState("");
+  const [stories, setStories] = useState("");
+  const [hiringManager, setHiringManager] = useState("");
+  const [companyDept, setCompanyDept] = useState("");
+  const [companyLocation, setCompanyLocation] = useState("");
+  const [reqId, setReqId] = useState("");
+  const [companyDetail, setCompanyDetail] = useState("");
+  const [name, setName] = useState(DEFAULTS.name);
+  const [phone, setPhone] = useState(DEFAULTS.phone);
+  const [email, setEmail] = useState(DEFAULTS.email);
+  const [linkedin, setLinkedin] = useState(DEFAULTS.linkedin);
+
+  const [result, setResult] = useState(null);
+  const [activeVersion, setActiveVersion] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const resultRef = useRef(null);
+
+  const [contacts, setContacts] = useState([]);
+  const [resumeSlots, setResumeSlots] = useState([]);
+  const [activeResumeSlot, setActiveResumeSlot] = useState(null);
+
+  useEffect(() => {
+    setHistory(loadHistory());
+    setContacts(loadContacts());
+    setResumeSlots(loadResumeSlots());
+    // Reuse the base resume saved by the Resume Tailor agent
+    const saved = localStorage.getItem(BASE_RESUME_KEY);
+    if (saved) setBackground(saved);
+  }, []);
+
+  // Coffee-chat contacts whose company appears in this JD — your best material
+  const matchedContacts = contacts.filter(
+    (c) => c.company && c.company.length > 2 && jd.toLowerCase().includes(c.company.toLowerCase())
+  );
+
+  function insertContactStory(c) {
+    setStories((prev) => (prev ? prev.trimEnd() + "\n\n" : "") + contactStoryLine(c));
   }
 
-  const { jd, background, hiringManager, companyDept, reqId, companyDetail, tone, candidateName, candidatePhone, candidateEmail, candidateLinkedIn } = inputs;
+  const fields = { name, phone, email, linkedin, hiringManager, companyDept, companyLocation, reqId };
 
-  const extras = [];
-  if (hiringManager) extras.push(`HIRING MANAGER NAME: ${hiringManager}`);
-  if (companyDept) extras.push(`DEPARTMENT: ${companyDept}`);
-  if (reqId) extras.push(`REQ ID: ${reqId}`);
-  if (companyDetail) extras.push(`SPECIFIC COMPANY DETAIL TO USE IN STEP 3: ${companyDetail}`);
-  if (tone) extras.push(`PREFERRED TONE: ${tone}`);
-  if (candidateName) extras.push(`CANDIDATE NAME: ${candidateName}`);
-  if (candidatePhone) extras.push(`CANDIDATE PHONE: ${candidatePhone}`);
-  if (candidateEmail) extras.push(`CANDIDATE EMAIL: ${candidateEmail}`);
-  if (candidateLinkedIn) extras.push(`CANDIDATE LINKEDIN: ${candidateLinkedIn}`);
+  async function handleGenerate() {
+    if (!jd.trim() || !background.trim()) {
+      setError("Job description and your background/resume are both required.");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    setResult(null);
+    try {
+      const extras = [];
+      if (hiringManager) extras.push(`HIRING MANAGER NAME: ${hiringManager}`);
+      if (companyDept) extras.push(`DEPARTMENT: ${companyDept}`);
+      if (reqId) extras.push(`REQ ID: ${reqId}`);
+      if (companyDetail) extras.push(`COMPANY DETAIL (user-provided — use this, do not search): ${companyDetail}`);
 
-  const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "2-digit" });
-
-  const userMessage = `TODAY'S DATE: ${today}
-
-JOB DESCRIPTION:
+      const userMessage = `JOB DESCRIPTION:
 ${jd}
 
 ${"─".repeat(40)}
@@ -239,531 +445,328 @@ ${background}
 
 ${"─".repeat(40)}
 
+ROLE-SPECIFIC STORIES & CONTEXT (PRIORITY MATERIAL):
+${stories.trim() || "None provided."}
+
+${"─".repeat(40)}
+
 ADDITIONAL DETAILS:
-${extras.join("\n")}`;
+${extras.join("\n") || "None."}`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
-    body: JSON.stringify({
-      model: "claude-opus-4-8",
-      max_tokens: 4000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }]
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err?.error?.message || "API error");
-  }
-
-  const data = await response.json();
-  const text = data.content.map(b => b.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
-}
-
-// ─────────────────────────────────────────────────────────────────
-// UI COMPONENTS
-// ─────────────────────────────────────────────────────────────────
-function Pill({ word, variant = "default" }) {
-  const v = {
-    default: { bg: "#dde0f0", color: "#444668", border: "#cdd0e8" },
-    green:   { bg: "#00b87208", color: "#00b872", border: "#00b87235" },
-    violet:  { bg: "#7c3aed08", color: "#7c3aed", border: "#7c3aed35" },
-    amber:   { bg: "#d9770608", color: "#fbbf24", border: "#d9770635" },
-    blue:    { bg: "#2563eb08", color: "#2563eb", border: "#2563eb35" },
-    indigo:  { bg: "#4f46e508", color: "#4f46e5", border: "#4f46e535" },
-    rose:    { bg: "#e1184908", color: "#fb7185", border: "#e1184935" },
-  }[variant] || { bg: "#dde0f0", color: "#444668", border: "#cdd0e8" };
-  return (
-    <span style={{
-      padding: "3px 10px", borderRadius: 20, fontSize: 11,
-      background: v.bg, color: v.color, border: `1px solid ${v.border}`,
-      fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", display: "inline-block"
-    }}>{word}</span>
-  );
-}
-
-function Label({ children, hint }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 7 }}>
-      <label style={{ fontSize: 10, fontWeight: 700, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase" }}>{children}</label>
-      {hint && <span style={{ fontSize: 10, color: "#888aaa" }}>{hint}</span>}
-    </div>
-  );
-}
-
-function TextArea({ value, onChange, placeholder, rows = 6 }) {
-  return (
-    <textarea
-      value={value} onChange={e => onChange(e.target.value)}
-      placeholder={placeholder} rows={rows}
-      style={{
-        width: "100%", background: "#f4f5fd",
-        border: "1px solid #dde0f0", borderRadius: 10,
-        padding: "12px 14px", color: "#111328",
-        fontSize: 12.5, lineHeight: 1.7, fontFamily: "inherit",
-        transition: "border-color 0.2s, box-shadow 0.2s"
-      }}
-    />
-  );
-}
-
-function TextInput({ value, onChange, placeholder }) {
-  return (
-    <input
-      value={value} onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      style={{
-        width: "100%", background: "#f4f5fd",
-        border: "1px solid #dde0f0", borderRadius: 10,
-        padding: "10px 14px", color: "#111328",
-        fontSize: 12.5, fontFamily: "inherit",
-        transition: "border-color 0.2s, box-shadow 0.2s"
-      }}
-    />
-  );
-}
-
-// Step badge for the 6-step structure display
-function StepBadge({ num, title, desc }) {
-  return (
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-      <div style={{
-        width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-        background: "#6366f110", border: "1px solid #6366f130",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 11, fontWeight: 800, color: "#4f46e5",
-        fontFamily: "'JetBrains Mono', monospace"
-      }}>{num}</div>
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#2d3058", marginBottom: 2 }}>{title}</div>
-        <div style={{ fontSize: 11, color: "#555878", lineHeight: 1.5 }}>{desc}</div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────────────────────────
-export default function CoverLetterAgent() {
-  // Core inputs
-  const [jd, setJd] = useState("");
-  const [background, setBackground] = useState("");
-  // Candidate header info
-  const [candidateName, setCandidateName] = useState("Sunny Bhargava");
-  const [candidatePhone, setCandidatePhone] = useState("+1 (551)-998-5759");
-  const [candidateEmail, setCandidateEmail] = useState("sb299@fordham.edu");
-  const [candidateLinkedIn, setCandidateLinkedIn] = useState("linkedin.com/in/bhargavasunny");
-  // Job details
-  const [hiringManager, setHiringManager] = useState("");
-  const [companyDept, setCompanyDept] = useState("");
-  const [reqId, setReqId] = useState("");
-  const [companyDetail, setCompanyDetail] = useState("");
-  // Tone
-  const [tone, setTone] = useState("Professional & Direct");
-  // UI state
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [activeVersion, setActiveVersion] = useState("A");
-  const [copied, setCopied] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
-  const [showCandidate, setShowCandidate] = useState(false);
-  const resultRef = useRef(null);
-
-  async function handleGenerate() {
-    if (!jd.trim() || !background.trim()) {
-      setError("Job description and your background are both required.");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    setResult(null);
-    try {
-      const data = await callClaude({
-        jd, background, hiringManager, companyDept, reqId,
-        companyDetail, tone, candidateName, candidatePhone,
-        candidateEmail, candidateLinkedIn
-      });
-      setResult(data);
-      setActiveVersion(data.strongest_version || "A");
+      const raw = await callClaude(userMessage);
+      const parsed = parseResponse(raw);
+      setResult(parsed);
+      setActiveVersion(Number(parsed.meta.recommended_version) || 1);
+      setHistory(
+        saveHistoryEntry({
+          id: Date.now(),
+          date: new Date().toISOString().slice(0, 10),
+          company: parsed.meta.company || "Unknown",
+          role: parsed.meta.role || "",
+          status: "applied",
+          result: parsed,
+          jd,
+          stories,
+        })
+      );
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (e) {
-      if (e.message === "API_KEY_MISSING") {
-        setError("API key missing — paste your key into ANTHROPIC_API_KEY at the top of CoverLetterAgent.jsx");
-      } else {
-        setError(`Error: ${e.message}`);
-      }
+      setError(`Error: ${e.message}`);
     }
     setLoading(false);
   }
 
-  function copyVersion(v) {
-    const vData = result?.versions?.[v];
-    if (!vData) return;
-    navigator.clipboard.writeText(vData.body);
-    setCopied(v);
-    setTimeout(() => setCopied(""), 2500);
+  function restoreEntry(h) {
+    setJd(h.jd || "");
+    setStories(h.stories || "");
+    setResult(h.result);
+    setActiveVersion(Number(h.result?.meta?.recommended_version) || 1);
+    setShowHistory(false);
+    setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
   }
 
-  const TONES = ["Professional & Direct", "Confident & Bold", "Warm & Strategic"];
-  const VERSION_META = {
-    A: { color: "#2563eb", bg: "#2563eb0a", border: "#2563eb40" },
-    B: { color: "#7c3aed", bg: "#7c3aed0a", border: "#7c3aed40" },
-    C: { color: "#34d399", bg: "#0597540a", border: "#05975440" },
+  const current = result?.versions.find((v) => v.id === activeVersion);
+  const headerLines = result ? buildHeaderLines(fields, result.meta) : [];
+
+  function copyLetter() {
+    const text = current.isShort ? current.body : fullLetterText(headerLines, current.body);
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  }
+
+  async function handleDocx() {
+    const company = (result.meta.company || "letter").replace(/[^a-z0-9]/gi, "_");
+    await downloadLetterDocx(headerLines, current.body, `${name.replace(/\s+/g, "_")}_Cover_Letter_${company}`);
+  }
+
+  const inputStyle = {
+    width: "100%", background: "#f0f1fa", border: "1px solid #dde0f0", borderRadius: 10,
+    padding: "10px 13px", color: "#111328", fontSize: 12.5, lineHeight: 1.6, fontFamily: "inherit",
+  };
+  const labelStyle = {
+    display: "block", fontSize: 10, fontWeight: 700, color: "#555878",
+    letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 7,
   };
 
-  const activeData = result?.versions?.[activeVersion];
-  
-
   return (
-    <div style={{ minHeight: "100vh", background: "#f8f9ff", fontFamily: "'Bricolage Grotesque', 'Sora', sans-serif", color: "#111328", paddingBottom: 80 }}>
+    <div style={{ minHeight: "100vh", background: "#f7f8ff", fontFamily: "'Sora', sans-serif", color: "#1a1c30", paddingBottom: 80 }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        textarea, input { font-family: inherit; resize: vertical; }
-        input { resize: none; }
-        textarea:focus, input:focus { outline: none !important; border-color: #6366f1 !important; box-shadow: 0 0 0 3px #6366f110 !important; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #f4f5fd; }
-        ::-webkit-scrollbar-thumb { background: #cdd0e8; border-radius: 2px; }
-        .gen-btn { transition: all 0.2s; cursor: pointer; border: none; font-family: inherit; }
-        .gen-btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.1); box-shadow: 0 8px 32px #6366f130 !important; }
-        .gen-btn:disabled { opacity: 0.38; cursor: not-allowed; }
-        .tone-btn { transition: all 0.15s; cursor: pointer; font-family: inherit; }
-        .tone-btn:hover { border-color: #6366f1 !important; }
-        .ver-tab { transition: all 0.15s; cursor: pointer; font-family: inherit; border: none; background: transparent; }
-        .act-btn { transition: all 0.15s; cursor: pointer; font-family: inherit; }
-        .act-btn:hover { border-color: #6366f1 !important; color: #4f46e5 !important; }
-        .tog-btn { transition: color 0.15s; cursor: pointer; font-family: inherit; background: none; border: none; }
-        .tog-btn:hover { color: #4f46e5 !important; }
+        textarea, input { resize: vertical; font-family: inherit; }
+        textarea:focus, input:focus { outline: none !important; border-color: #00d4aa !important; box-shadow: 0 0 0 3px #00d4aa15 !important; }
+        .run-btn { transition: all 0.2s; cursor: pointer; border: none; font-family: inherit; }
+        .run-btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.08); }
+        .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .copy-btn { transition: all 0.15s; cursor: pointer; font-family: inherit; }
+        .copy-btn:hover { border-color: #00d4aa !important; color: #00d4aa !important; }
+        .ver-btn { transition: all 0.15s; cursor: pointer; font-family: inherit; }
         pre { white-space: pre-wrap; word-break: break-word; }
-        .step-row { border-bottom: 1px solid #e8eaf4; padding-bottom: 10px; margin-bottom: 10px; }
-        .step-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
       `}</style>
 
-      {/* ── HEADER ── */}
-      <div style={{ borderBottom: "1px solid #dde0f0", padding: "26px 40px 22px", background: "linear-gradient(180deg, #eef0fa 0%, #f8f9ff 100%)" }}>
-        <div style={{ maxWidth: 960, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
-            <div style={{
-              width: 46, height: 46, borderRadius: 12, flexShrink: 0,
-              background: "linear-gradient(135deg, #6366f1 0%, #a855f7 100%)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 22, boxShadow: "0 4px 24px #6366f120"
-            }}>✉️</div>
-            <div>
-              <div style={{ fontSize: 10, color: "#6366f1", letterSpacing: 2.5, textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>
-                Agent 03 · Job Search Suite
-              </div>
-              <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: "#111328", lineHeight: 1 }}>
-                Cover Letter Generator <span style={{ fontSize: 11, fontWeight: 400, color: "#888aaa", letterSpacing: 0 }}>v2.0</span>
-              </h1>
+      {/* HEADER */}
+      <div style={{ borderBottom: "1px solid #dde0f0", padding: "26px 40px" }}>
+        <div style={{ maxWidth: 980, margin: "0 auto", display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 11, flexShrink: 0, background: "linear-gradient(135deg, #a855f7, #0066ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>✉️</div>
+          <div>
+            <div style={{ fontSize: 10, color: "#a855f7", letterSpacing: 2.5, textTransform: "uppercase", fontWeight: 700, marginBottom: 3 }}>
+              Agent 03 · Job Search Suite
             </div>
-            <div style={{ marginLeft: "auto", textAlign: "right", fontSize: 11, color: "#888aaa", lineHeight: 1.9 }}>
-              6-step cheat sheet structure · 3 tone versions<br />
-              MongoDB-style format · No templates · No clichés
-            </div>
+            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, color: "#111328", lineHeight: 1 }}>
+              Cover Letter — Sunny{" "}
+              <span style={{ fontSize: 12, fontWeight: 400, color: "#555878", letterSpacing: 0 }}>v4.0 · real web search</span>
+            </h1>
           </div>
-
-          {/* 6-step structure preview */}
-          <div style={{
-            background: "#ffffff", border: "1px solid #dde0f0",
-            borderRadius: 10, padding: "14px 18px"
-          }}>
-            <div style={{ fontSize: 10, color: "#555878", fontWeight: 700, letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 12 }}>
-              6-Step Structure Applied to Every Version
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 24px" }}>
-              {[
-                { num: 1, title: "Interest", desc: "Role + company, 1 sentence" },
-                { num: 2, title: "Identity", desc: "MBA Candidate, Fordham, years of experience" },
-                { num: 3, title: "Mission Relevance", desc: "Company direction → your career goal, 1–2 sentences" },
-                { num: 4, title: "Proof", desc: "Specific achievements matching JD requirements" },
-                { num: 5, title: "Fit Summary", desc: "Direct confident statement, 1–2 sentences" },
-                { num: 6, title: "Closing", desc: "Restate interest, thank them, clean close" },
-              ].map(s => (
-                <div key={s.num} className="step-row">
-                  <StepBadge {...s} />
-                </div>
-              ))}
-            </div>
+          <div style={{ marginLeft: "auto", position: "relative" }}>
+            <button className="copy-btn" onClick={() => setShowHistory((s) => !s)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #ccd0e8", background: "transparent", color: "#555878", fontSize: 12, fontWeight: 600 }}>
+              🕘 History ({history.length})
+            </button>
+            {showHistory && (
+              <div style={{ position: "absolute", right: 0, top: 42, width: 340, maxHeight: 380, overflowY: "auto", background: "#fff", border: "1px solid #dde0f0", borderRadius: 12, boxShadow: "0 10px 40px #00000018", zIndex: 50, padding: 8 }}>
+                {history.length === 0 && <div style={{ padding: 16, fontSize: 12, color: "#888baa", textAlign: "center" }}>No saved letters yet.</div>}
+                {history.map((h) => (
+                  <div key={h.id} style={{ padding: "10px 12px", borderBottom: "1px solid #f0f1fa", display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => restoreEntry(h)}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: "#111328" }}>{h.company}</div>
+                      <div style={{ fontSize: 11, color: "#555878" }}>{h.role}</div>
+                      <div style={{ fontSize: 10, color: "#888baa", fontFamily: "'DM Mono', monospace" }}>{h.date}</div>
+                    </div>
+                    <select
+                      value={h.status || "applied"}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setHistory(setHistoryStatus(h.id, e.target.value))}
+                      style={{ fontSize: 10, padding: "3px 4px", borderRadius: 6, border: "1px solid #dde0f0", background: "#f7f8ff", color: "#555878", fontFamily: "inherit", cursor: "pointer" }}
+                      title="Outcome — keep this updated so the home page can show what converts"
+                    >
+                      {["applied", "no reply", "response", "interview", "offer", "rejected"].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setHistory(deleteHistoryEntry(h.id))} style={{ border: "none", background: "transparent", color: "#ff4d6d", cursor: "pointer", fontSize: 14 }} title="Delete">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 40px 0" }}>
-
-        {/* ── CANDIDATE HEADER INFO ── */}
-        <div style={{ marginBottom: 18 }}>
-          <button className="tog-btn" onClick={() => setShowCandidate(!showCandidate)}
-            style={{ fontSize: 12, color: "#555878", fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ display: "inline-block", transition: "transform 0.2s", transform: showCandidate ? "rotate(90deg)" : "none", fontSize: 9 }}>▶</span>
-            {showCandidate ? "Hide" : "Edit"} your header info (name, phone, email, LinkedIn — pre-filled with your details)
-          </button>
-
-          {showCandidate && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginTop: 12 }}>
-              {[
-                { label: "Full Name", val: candidateName, set: setCandidateName, placeholder: "Sunny Bhargava" },
-                { label: "Phone", val: candidatePhone, set: setCandidatePhone, placeholder: "+1 (551)-998-5759" },
-                { label: "Email", val: candidateEmail, set: setCandidateEmail, placeholder: "sb299@fordham.edu" },
-                { label: "LinkedIn URL", val: candidateLinkedIn, set: setCandidateLinkedIn, placeholder: "linkedin.com/in/..." },
-              ].map(({ label, val, set, placeholder }) => (
-                <div key={label}>
-                  <Label>{label}</Label>
-                  <TextInput value={val} onChange={set} placeholder={placeholder} />
-                </div>
-              ))}
-            </div>
-          )}
+      <div style={{ maxWidth: 980, margin: "0 auto", padding: "30px 40px 0" }}>
+        {/* MAIN INPUTS */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 16 }}>
+          <div>
+            <label style={labelStyle}>Job Description</label>
+            <textarea value={jd} onChange={(e) => setJd(e.target.value)} rows={12} placeholder="Paste the full JD — title, team, responsibilities, requirements..." style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Your Background / Resume {background && <span style={{ color: "#00d4aa" }}>· loaded</span>}</label>
+            {resumeSlots.length > 0 && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 10, color: "#888baa", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>My resumes:</span>
+                {resumeSlots.map((s, i) => (
+                  <button
+                    key={s.id}
+                    className="copy-btn"
+                    onClick={() => { setBackground(s.text); setActiveResumeSlot(i); }}
+                    style={{ padding: "4px 12px", borderRadius: 8, border: activeResumeSlot === i ? "1.5px solid #a855f7" : "1px solid #ccd0e8", background: activeResumeSlot === i ? "#a855f710" : "transparent", color: activeResumeSlot === i ? "#a855f7" : "#555878", fontSize: 11, fontWeight: 700 }}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+                <span style={{ fontSize: 10, color: "#ccd0e8" }}>· manage slots in the Resume Tailor</span>
+              </div>
+            )}
+            <textarea value={background} onChange={(e) => { setBackground(e.target.value); setActiveResumeSlot(null); }} rows={12} placeholder="Pick one of your saved resumes above, or paste here." style={inputStyle} />
+          </div>
         </div>
 
-        {/* ── TONE SELECTOR ── */}
-        <div style={{ marginBottom: 20 }}>
-          <Label hint="All 3 versions generated — this sets your priority">Preferred Tone</Label>
-          <div style={{ display: "flex", gap: 8 }}>
-            {TONES.map(t => (
-              <button key={t} className="tone-btn" onClick={() => setTone(t)} style={{
-                padding: "9px 18px", borderRadius: 8,
-                border: `1px solid ${tone === t ? "#6366f1" : "#dde0f0"}`,
-                background: tone === t ? "#6366f110" : "transparent",
-                color: tone === t ? "#4f46e5" : "#555878",
-                fontSize: 12.5, fontWeight: 600
-              }}>{t}</button>
+        {/* Matching coffee-chat contacts — one click into the stories box */}
+        {matchedContacts.length > 0 && (
+          <Card style={{ marginBottom: 16, borderColor: "#00d4aa50", background: "#00d4aa08" }}>
+            <div style={{ fontSize: 10, color: "#00a184", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>
+              ☕ You've talked to people at this company — use it
+            </div>
+            {matchedContacts.map((c) => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, color: "#2a2c42", flex: 1, minWidth: 220 }}>
+                  <strong>{c.name}</strong>{c.role ? ` — ${c.role}` : ""} ({c.date}){c.quote ? ` · "${c.quote.slice(0, 60)}${c.quote.length > 60 ? "..." : ""}"` : ""}
+                </span>
+                <button className="copy-btn" onClick={() => insertContactStory(c)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #00d4aa60", background: "#00d4aa10", color: "#00a184", fontSize: 11.5, fontWeight: 700 }}>
+                  + Insert into Stories
+                </button>
+              </div>
             ))}
-          </div>
-        </div>
+            <p style={{ fontSize: 11, color: "#888baa", marginTop: 8 }}>
+              A named conversation in the letter is your single strongest personalization — and consider asking them for a referral before submitting.
+            </p>
+          </Card>
+        )}
 
-        {/* ── MAIN INPUTS ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 14 }}>
-          <div>
-            <Label hint="Full JD preferred">Job Description</Label>
-            <TextArea value={jd} onChange={setJd} rows={14}
-              placeholder="Paste the full job description — company, role title, responsibilities, required skills, preferred qualifications, tools..." />
-          </div>
-          <div>
-            <Label hint="Include real numbers">Your Background / Resume</Label>
-            <TextArea value={background} onChange={setBackground} rows={14}
-              placeholder={"Paste your resume or write key background points:\n• Role titles, companies, dates\n• Specific achievements with numbers\n• Skills and tools\n• MBA context — Fordham, Class of 2027\n• Anything you want the proof paragraph to draw from..."} />
-          </div>
-        </div>
-
-        {/* ── JOB DETAILS (Optional) ── */}
+        {/* STORIES & CONTEXT — the new priority-material input */}
         <div style={{ marginBottom: 16 }}>
-          <button className="tog-btn" onClick={() => setShowDetails(!showDetails)}
-            style={{ fontSize: 12, color: "#555878", fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ display: "inline-block", transition: "transform 0.2s", transform: showDetails ? "rotate(90deg)" : "none", fontSize: 9 }}>▶</span>
-            {showDetails ? "Hide" : "Add"} job details — hiring manager, department, Req ID, company-specific detail
-          </button>
-
-          {showDetails && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginTop: 12 }}>
-              {[
-                { label: "Hiring Manager Name", val: hiringManager, set: setHiringManager, placeholder: "e.g. Sarah Chen" },
-                { label: "Department", val: companyDept, set: setCompanyDept, placeholder: "e.g. Technical Services PMO" },
-                { label: "Req ID", val: reqId, set: setReqId, placeholder: "e.g. 3263273688" },
-                { label: "Company Detail for Step 3", val: companyDetail, set: setCompanyDetail, placeholder: "e.g. Their AI-native expansion into Fortune 100" },
-              ].map(({ label, val, set, placeholder }) => (
-                <div key={label}>
-                  <Label>{label}</Label>
-                  <TextInput value={val} onChange={set} placeholder={placeholder} />
-                </div>
-              ))}
-            </div>
-          )}
+          <label style={labelStyle}>
+            Stories & Context for this role <span style={{ color: "#a855f7" }}>· priority material — woven into the letter</span>
+          </label>
+          <textarea
+            value={stories}
+            onChange={(e) => setStories(e.target.value)}
+            rows={5}
+            placeholder={'Anything specific to THIS application: a story ("At Livguard I once..."), a networking conversation ("I spoke with Sarah Chen, a PM there, who told me..."), firm frameworks or values you want referenced, points you want emphasized. Version 3 leans on this hardest.'}
+            style={inputStyle}
+          />
         </div>
 
-        {/* ── ERROR ── */}
+        {/* DETAILS GRID */}
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, color: "#555878", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 14 }}>
+            Application Details (optional) & Letter Header
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div><label style={labelStyle}>Hiring Manager</label><input value={hiringManager} onChange={(e) => setHiringManager(e.target.value)} placeholder="e.g. Sarah Chen" style={inputStyle} /></div>
+            <div><label style={labelStyle}>Department / Team</label><input value={companyDept} onChange={(e) => setCompanyDept(e.target.value)} placeholder="e.g. Product Management" style={inputStyle} /></div>
+            <div><label style={labelStyle}>Company Location</label><input value={companyLocation} onChange={(e) => setCompanyLocation(e.target.value)} placeholder="e.g. Torrington, CT" style={inputStyle} /></div>
+            <div><label style={labelStyle}>Req / Job ID</label><input value={reqId} onChange={(e) => setReqId(e.target.value)} placeholder="e.g. 14918" style={inputStyle} /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>Company Detail Override <span style={{ color: "#888baa", textTransform: "none", letterSpacing: 0 }}>— if filled, this is used instead of web search</span></label>
+            <input value={companyDetail} onChange={(e) => setCompanyDetail(e.target.value)} placeholder="e.g. Their Q2 expansion of the AI-native platform into Fortune 100 accounts" style={inputStyle} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+            <div><label style={labelStyle}>Full Name</label><input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} /></div>
+            <div><label style={labelStyle}>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} /></div>
+            <div><label style={labelStyle}>Email</label><input value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} /></div>
+            <div><label style={labelStyle}>LinkedIn</label><input value={linkedin} onChange={(e) => setLinkedin(e.target.value)} style={inputStyle} /></div>
+          </div>
+        </Card>
+
         {error && (
-          <div style={{ background: "#e1184908", border: "1px solid #e1184930", borderRadius: 10, padding: "12px 16px", marginBottom: 14, color: "#fb7185", fontSize: 13 }}>
-            ⚠️ {error}
+          <div style={{ background: "#ff4d6d0a", border: "1px solid #ff4d6d30", borderRadius: 10, padding: "12px 16px", marginBottom: 14, color: "#ff4d6d", fontSize: 13 }}>
+            {error}
           </div>
         )}
 
-        {/* ── GENERATE BUTTON ── */}
-        <button className="gen-btn" onClick={handleGenerate} disabled={loading} style={{
-          width: "100%", padding: "16px 0", borderRadius: 12,
-          background: loading ? "#e8eaf6" : "linear-gradient(135deg, #6366f1 0%, #a855f7 100%)",
-          color: loading ? "#555878" : "#ffffff",
-          fontSize: 14, fontWeight: 700, letterSpacing: 0.4,
-          boxShadow: loading ? "none" : "0 4px 24px #6366f120"
-        }}>
-          {loading ? "✍️  Writing 3 versions using 6-step structure — 15–20 seconds..." : "✉️  Generate 3 Cover Letter Versions"}
+        <button
+          className="run-btn"
+          onClick={handleGenerate}
+          disabled={loading}
+          style={{ width: "100%", padding: "15px 0", borderRadius: 12, background: loading ? "#e8eaf4" : "linear-gradient(135deg, #a855f7 0%, #0055ff 100%)", color: loading ? "#555878" : "#ffffff", fontSize: 14, fontWeight: 700, letterSpacing: 0.5, boxShadow: loading ? "none" : "0 4px 20px #a855f725" }}
+        >
+          {loading ? "⏳  Searching company news & writing 3 versions..." : "✉️  Generate Cover Letter — 3 Emphasis Versions"}
         </button>
 
-        {/* ── RESULTS ── */}
-        {result && (
+        {/* RESULTS */}
+        {result && current && (
           <div ref={resultRef} style={{ marginTop: 44 }}>
-
-            {/* Meta row */}
-            <div style={{
-              background: "#ffffff", border: "1px solid #dde0f0",
-              borderRadius: 12, padding: "16px 22px", marginBottom: 20,
-              display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center"
-            }}>
-              <div>
-                <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Role</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#111328" }}>{result.role_title}</div>
-              </div>
-              <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
-              <div>
-                <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Company</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#111328" }}>{result.company_name}</div>
-              </div>
-              {result.req_id && <>
-                <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
-                <div>
-                  <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Req ID</div>
-                  <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: "#4f46e5" }}>{result.req_id}</div>
+            {/* META BAR */}
+            <Card style={{ marginBottom: 20, borderColor: "#a855f733", background: "#a855f708" }}>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{ fontSize: 10, color: "#a855f7", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>
+                    News / Company Detail Used
+                  </div>
+                  <p style={{ fontSize: 13, color: "#2a2c42", lineHeight: 1.7 }}>
+                    {result.meta.news_item_used || "—"}
+                  </p>
+                  {/NONE FOUND/i.test(result.meta.news_item_used || "") && (
+                    <p style={{ fontSize: 11.5, color: "#f5a623", marginTop: 6 }}>
+                      ⚠ No verifiable recent news found — the letter uses a JD detail instead. Consider adding a Company Detail manually and re-running.
+                    </p>
+                  )}
                 </div>
-              </>}
-              <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
-              <div>
-                <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 6 }}>JD Keywords Embedded</div>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  {result.keyword_hits?.map(k => <Pill key={k} word={k} variant="green" />)}
+                <div style={{ minWidth: 200 }}>
+                  <div style={{ fontSize: 10, color: "#f5a623", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>
+                    Skeptic Question Answered
+                  </div>
+                  <p style={{ fontSize: 12.5, color: "#2a2c42", lineHeight: 1.6, marginBottom: 12 }}>{result.meta.skeptic_question || "—"}</p>
+                  {result.meta.hiring_manager_found && !/^none$/i.test(result.meta.hiring_manager_found) && (
+                    <p style={{ fontSize: 11.5, color: "#00a184", marginBottom: 12 }}>Addressed to: {result.meta.hiring_manager_found} (verify before sending)</p>
+                  )}
+                  <div style={{ fontSize: 10, color: "#0099ff", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>
+                    JD Keywords Woven In
+                  </div>
+                  <div>{(result.meta.keyword_hits || "").split(";").filter((k) => k.trim()).map((k) => <Pill key={k} word={k.trim()} variant="blue" />)}</div>
                 </div>
               </div>
-              <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>Proof Achievement Used</div>
-                <div style={{ fontSize: 12, color: "#4f46e5", lineHeight: 1.5 }}>{result.achievement_used}</div>
-              </div>
-              {result.news_item_used && <>
-                <div style={{ width: 1, height: 32, background: "#dde0f0" }} />
-                <div style={{ flex: 1, minWidth: 180 }}>
-                  <div style={{ fontSize: 9, color: "#555878", letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 5 }}>News Item Used</div>
-                  <div style={{ fontSize: 12, color: "#059669", lineHeight: 1.5 }}>{result.news_item_used}</div>
-                </div>
-              </>}
-            </div>
+            </Card>
 
-            {/* Recommendation */}
-            {result.strongest_version && (
-              <div style={{
-                background: "#6366f108", border: "1px solid #6366f125",
-                borderRadius: 10, padding: "12px 18px", marginBottom: 22,
-                display: "flex", gap: 10, alignItems: "center"
-              }}>
-                <span style={{ fontSize: 16 }}>⭐</span>
-                <p style={{ fontSize: 12.5, color: "#444668", lineHeight: 1.5 }}>
-                  <span style={{ color: "#4f46e5", fontWeight: 700 }}>Version {result.strongest_version} recommended</span>
-                  {" "}for this application. {result.strongest_reason}
-                </p>
-              </div>
-            )}
-
-            {/* Version tabs */}
-            <div style={{ display: "flex", borderBottom: "1px solid #dde0f0", marginBottom: 0 }}>
-              {["A", "B", "C"].map(v => {
-                const vd = result.versions?.[v];
-                const meta = VERSION_META[v];
-                if (!vd) return null;
-                const isActive = activeVersion === v;
+            {/* VERSION TABS */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+              {result.versions.map((v) => {
+                const isRec = Number(result.meta.recommended_version) === v.id;
+                const isActive = activeVersion === v.id;
                 return (
-                  <button key={v} className="ver-tab" onClick={() => setActiveVersion(v)} style={{
-                    flex: 1, padding: "14px 10px",
-                    background: isActive ? meta.bg : "transparent",
-                    borderBottom: `2px solid ${isActive ? meta.color : "transparent"}`,
-                    color: isActive ? meta.color : "#555878",
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 3
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{v}</span>
-                      {result.strongest_version === v && (
-                        <span style={{ fontSize: 9, background: meta.color, color: "#ffffff", padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>★</span>
-                      )}
+                  <button
+                    key={v.id}
+                    className="ver-btn"
+                    onClick={() => setActiveVersion(v.id)}
+                    style={{
+                      flex: 1, minWidth: 180, padding: "12px 16px", borderRadius: 10, textAlign: "left",
+                      border: isActive ? "2px solid #a855f7" : "1px solid #dde0f0",
+                      background: isActive ? "#a855f70d" : "#ffffff",
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 800, color: isActive ? "#a855f7" : "#555878", letterSpacing: 0.5 }}>
+                      V{v.id} — {v.label} {isRec && <span style={{ color: "#00d4aa" }}>★ recommended</span>}
                     </div>
-                    <div style={{ fontSize: 11, fontWeight: 600 }}>{vd.label}</div>
-                    <div style={{ fontSize: 10, color: "#888aaa" }}>{vd.best_for}</div>
-                    <Pill word={`${vd.word_count}w`} variant="default" />
+                    <div style={{ fontSize: 10.5, color: "#888baa", marginTop: 3, fontFamily: "'DM Mono', monospace" }}>
+                      {wordCount(v.body)} words
+                    </div>
                   </button>
                 );
               })}
             </div>
-
-            {/* Letter display */}
-            {activeData && (
-              <div>
-                {/* Letter body — formatted like a real document */}
-                <div style={{
-                  background: "#ffffff", border: "1px solid #dde0f0", borderTop: "none",
-                  padding: "40px 48px", minHeight: 400
-                }}>
-                  <pre style={{
-                    fontSize: 13.5, color: "#111328", lineHeight: 1.95,
-                    fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 400
-                  }}>
-                    {activeData.body}
-                  </pre>
-                </div>
-
-                {/* Action bar */}
-                <div style={{
-                  background: "#ffffff", border: "1px solid #dde0f0", borderTop: "none",
-                  borderRadius: "0 0 12px 12px", padding: "13px 18px",
-                  display: "flex", gap: 8
-                }}>
-                  <button className="act-btn" onClick={() => copyVersion(activeVersion)} style={{
-                    flex: 1, padding: "10px 0", borderRadius: 8,
-                    border: `1px solid ${copied === activeVersion ? "#00b87235" : "#cdd0e8"}`,
-                    background: copied === activeVersion ? "#00b87208" : "transparent",
-                    color: copied === activeVersion ? "#00b872" : "#444668",
-                    fontSize: 12.5, fontWeight: 600
-                  }}>
-                    {copied === activeVersion ? "✅ Copied to clipboard!" : `📋 Copy Version ${activeVersion} — Ready to paste into Word`}
-                  </button>
-                  {["A", "B", "C"].filter(v => v !== activeVersion).map(v => result.versions?.[v] && (
-                    <button key={v} className="act-btn" onClick={() => copyVersion(v)} style={{
-                      padding: "10px 16px", borderRadius: 8,
-                      border: "1px solid #cdd0e8", background: "transparent",
-                      color: copied === v ? "#00b872" : "#555878",
-                      fontSize: 12, fontWeight: 600
-                    }}>
-                      {copied === v ? "✅" : `Copy ${v}`}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {Number(result.meta.recommended_version) === activeVersion && result.meta.recommended_reason && (
+              <div style={{ fontSize: 12, color: "#00a184", marginBottom: 14 }}>★ {result.meta.recommended_reason}</div>
             )}
 
-            {/* Rules applied */}
-            <div style={{ marginTop: 20, background: "#ffffff", border: "1px solid #dde0f0", borderRadius: 12, padding: "18px 22px" }}>
-              <div style={{ fontSize: 10, color: "#555878", fontWeight: 700, letterSpacing: 1.8, textTransform: "uppercase", marginBottom: 14 }}>
-                Rules Applied to All 3 Versions
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px 28px" }}>
-                {[
-                  "6-step cheat sheet structure followed",
-                  "No 'I am excited / eager / pleased to apply'",
-                  "No 'passionate about' anywhere",
-                  "No company mission summary recitation",
-                  "No fabricated achievements or metrics",
-                  "At least 2 JD keywords naturally embedded",
-                  "At least 1 quantified achievement in proof",
-                  "International background framed as asset",
-                  "Max 450 words body — concise and focused",
-                  "Proper salutation: Dear [Name] / Dear Hiring Manager",
-                  "Proper closing: Sincerely, [Candidate Name]",
-                  "Req ID + Department included in header if provided",
-                ].map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <span style={{ color: "#6366f1", fontSize: 12, marginTop: 2, flexShrink: 0 }}>✓</span>
-                    <span style={{ fontSize: 11.5, color: "#555878", lineHeight: 1.5 }}>{r}</span>
-                  </div>
-                ))}
-              </div>
+            {/* LETTER */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 10 }}>
+              <button className="copy-btn" onClick={copyLetter} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid #ccd0e8", background: "transparent", color: "#888baa", fontSize: 12, fontWeight: 600 }}>
+                {copied ? "✅ Copied!" : "📋 Copy Full Letter"}
+              </button>
+              {!current.isShort && (
+                <button className="copy-btn" onClick={handleDocx} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid #a855f760", background: "#a855f710", color: "#a855f7", fontSize: 12, fontWeight: 700 }}>
+                  ⬇️ Download DOCX
+                </button>
+              )}
             </div>
-
+            {(() => {
+              const dashes = (current.body.match(/[—–;]| - /g) || []).length;
+              return dashes > 0 ? (
+                <div style={{ background: "#f5a6230a", border: "1px solid #f5a62340", borderRadius: 10, padding: "10px 16px", marginBottom: 10, fontSize: 12.5, color: "#b07a10", lineHeight: 1.6 }}>
+                  ⚠ Punctuation check: found {dashes} dash/semicolon use{dashes > 1 ? "s" : ""} in this version despite the rule. Fix them manually before sending, or regenerate.
+                </div>
+              ) : null;
+            })()}
+            <Card>
+              <pre style={{ fontSize: 13, color: "#1a1c30", lineHeight: 1.9, fontFamily: "Georgia, serif" }}>
+                {current.isShort ? current.body : fullLetterText(headerLines, current.body)}
+              </pre>
+            </Card>
+            <div style={{ marginTop: 12, fontSize: 11, color: "#555878", textAlign: "center" }}>
+              DOCX export uses your Dymax letter formatting — Times New Roman, centered name header, bold contribution labels.
+            </div>
           </div>
         )}
       </div>
