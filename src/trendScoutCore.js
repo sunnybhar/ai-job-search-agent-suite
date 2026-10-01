@@ -26,23 +26,36 @@ export const PILLARS = ["AI", "Product Management", "Tech & Industry", "Career &
 
 // Edit this to change who the content is for. The in-app agent lets you
 // override it per browser; the daily GitHub Action always uses this one.
-export const DEFAULT_PROFILE = `Sunny Bhargava — first-year MBA candidate at Fordham University, Gabelli School of Business (Class of 2027), New York. ~10 years across product management, program management and operations:
-- Livguard: Product Manager — scaled a subscription platform from 200 to 11,000 users, 12% revenue growth, wrote PRDs and roadmaps, IoT/QR tooling, new product introduction end to end.
-- Tata Hitachi Construction Machinery: Regional Manager — IoT deployment that cut breakdowns 20% and cost 8%, led 60+ field personnel in a global B2B industrial business.
-- OYO: Operations Manager — 80 properties.
-- Gainwell: Project Lead — $0.5M monthly savings, 24-person team, mining fleet maintenance contracts.
+export const DEFAULT_PROFILE = `Sunny Bhargava — engineer turned product manager, now a first-year MBA candidate at Fordham University, Gabelli School of Business (Class of 2027), New York.
+
+Identity: comes from operations, working hands-on with physical products and with customers on the ground — not from a software-only background. Has led mining projects, built operations and service teams from scratch, and led regional operations planning. Product instincts were formed in the field: at machine sites, with service crews, and with the customers who use the product every day.
+
+Experience (~10 years; use only these facts):
+- Gainwell: Project Lead on mining projects — mining fleet maintenance contracts, 24-person team, $0.5M monthly savings.
+- Tata Hitachi Construction Machinery: Regional Manager — led regional operations planning and field service; IoT deployment that cut machine breakdowns 20% and cost 8%; led 60+ field personnel in a global B2B industrial business.
+- OYO: Operations Manager — built and ran operations across 80 properties.
+- Livguard: Product Manager — scaled a subscription platform from 200 to 11,000 users, 12% revenue growth; PRDs, roadmaps, IoT/QR tooling, new product introduction end to end.
 - B.Tech Mechanical Engineering, IIT-ISM Dhanbad.
-- Builds AI-powered workflow tools himself (Python, React, Anthropic API) — including a 9-agent job-search suite and a documentation tool that cut drafting time 90%.
-Positioning: an operator-turned-PM who builds with AI — brings the industrial/B2B and IoT product lens, hands-on AI building, and an MBA strategy lens.
-Audience to grow: product managers and aspiring PMs, MBA peers, AI builders, and tech hiring managers/recruiters in the US.
-Goals: grow followers with a consistent point of view, and be visible to PM hiring managers (content doubles as proof of product thinking).`;
+- Builds AI-powered workflow tools himself (Python, React, Anthropic API), including a 9-agent job-search suite and a documentation tool that cut drafting time 90%.
+
+Positioning: the PM who has been on the ground. Brings what software-native PMs usually lack: how physical products fail in the field, what frontline teams actually adopt, and how operations constraints shape product decisions. Pairs that with hands-on AI building and an MBA strategy lens.
+
+Content territory (highest fit first):
+1. AI and software meeting the physical world: industrial AI, IoT, predictive maintenance, field service, mining, construction, manufacturing, supply chain, robotics, hardware products.
+2. Product management craft learned from operations: customer discovery on the ground, adoption by frontline users, service as part of the product, operational metrics as product metrics.
+3. Building operations and service teams, and regional planning — what scales and what breaks.
+4. Career: engineer/operator to PM transitions, the MBA path into product.
+Mainstream AI or tech news is a fit only when the creator can tie it back to physical products, operations or frontline adoption.
+
+Audience to grow: product managers and aspiring PMs, operators moving into product, people building industrial and physical-world tech, MBA peers, and PM hiring managers in the US.
+Goals: grow followers with a consistent, recognizable point of view, and be visible to PM hiring managers — every post doubles as proof of product judgment.`;
 
 // ─────────────────────────────────────────────────────────────────
 // PROMPTS
 // ─────────────────────────────────────────────────────────────────
 const SCAN_SYSTEM = `You are a LinkedIn content strategist and research analyst working for one creator (profile in the user message). Each morning you find what is genuinely gaining traction in AI, product management and tech, and pick the topics where this creator can add a credible point of view that earns followers.
 
-Judging traction: LinkedIn has no public trending feed, so triangulate with web search across proxies — news coverage over the last 7 days, Hacker News and Reddit discussion (r/ProductManagement, r/artificial, r/MachineLearning, r/cscareerquestions), Product Hunt launches, YouTube uploads, newsletters (Lenny's Newsletter, Stratechery, The Pragmatic Engineer, Ben's Bites and similar), and LinkedIn posts or LinkedIn News items when search surfaces them. A topic needs at least two independent signals. Report what you actually found; never invent numbers, view counts or quotes.
+Judging traction: LinkedIn has no public trending feed, so triangulate with web search across proxies — news coverage over the last 7 days, Hacker News and Reddit discussion (r/ProductManagement, r/artificial, r/MachineLearning, r/cscareerquestions), Product Hunt launches, YouTube uploads, newsletters (Lenny's Newsletter, Stratechery, The Pragmatic Engineer, Ben's Bites and similar), industrial and operations trade press (Mining.com, Manufacturing Dive, Supply Chain Dive, IndustryWeek, The Robot Report and similar) when the creator's profile points there, and LinkedIn posts or LinkedIn News items when search surfaces them. A topic needs at least two independent signals. Report what you actually found; never invent numbers, view counts or quotes.
 
 Scores:
 - TRACTION 1-10: attention this week and whether it is still rising (10 = all of tech is discussing it and it's climbing; 5 = steady niche interest; 1 = quiet).
