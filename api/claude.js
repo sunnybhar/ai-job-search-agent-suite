@@ -15,8 +15,10 @@
 // ─────────────────────────────────────────────────────────────────
 
 // Only these models may be requested through the proxy (abuse guard)
-const ALLOWED_MODELS = ["claude-opus-4-8", "claude-sonnet-4-6"];
-const MAX_TOKENS_CAP = 10000;
+const ALLOWED_MODELS = ["claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-5-5"];
+const MAX_TOKENS_CAP = 16000;
+// Beta headers the browser may pass through (refusal fallback for Opus 5.5)
+const ALLOWED_BETAS = ["server-side-fallback-2026-07-01"];
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -39,14 +41,21 @@ export default async function handler(req, res) {
     body.max_tokens = MAX_TOKENS_CAP;
   }
 
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": key,
+    "anthropic-version": "2023-06-01"
+  };
+  const betas = String(req.headers["anthropic-beta"] || "")
+    .split(",")
+    .map((b) => b.trim())
+    .filter((b) => ALLOWED_BETAS.includes(b));
+  if (betas.length) headers["anthropic-beta"] = betas.join(",");
+
   try {
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01"
-      },
+      headers,
       body: JSON.stringify(body)
     });
     const data = await upstream.json();

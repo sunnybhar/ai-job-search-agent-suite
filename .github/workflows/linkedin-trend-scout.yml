@@ -1,0 +1,42 @@
+name: LinkedIn Trend Scout (daily)
+
+on:
+  schedule:
+    # 11:17 UTC Mon–Fri = 7:17am New York (EDT) / 6:17am (EST)
+    - cron: "17 11 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linkedin-trend-scout
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Research today's top 5 topics
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/linkedin-trend-scout.mjs
+
+      - name: Commit the brief
+        run: |
+          git config user.name "linkedin-trend-scout[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/linkedin-briefs
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "LinkedIn Trend Scout brief for $(TZ=America/New_York date +%F)"
+            git push
+          fi

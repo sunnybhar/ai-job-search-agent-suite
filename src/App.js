@@ -9,6 +9,7 @@ import StartupEmailAgent from "./StartupEmailAgent";
 import FollowUpAgent from "./FollowUpAgent";
 import CoffeeChatAgent from "./CoffeeChatAgent";
 import BehavioralCoach from "./BehavioralCoach";
+import LinkedInTrendScout from "./LinkedInTrendScout";
 
 // ─────────────────────────────────────────────────────────────────
 // HOME PAGE v2.0 — "Sunny Bhargava · Product Management Job Agent"
@@ -42,6 +43,13 @@ const STAGES = [
     agents: [
       { id: "coffee", name: "Coffee Chat", desc: "Outreach and prep for networking conversations", icon: "☕", component: CoffeeChatAgent },
       { id: "behavioral", name: "Behavioral Coach", desc: "STAR story practice and interview answer coaching", icon: "🎤", component: BehavioralCoach },
+    ],
+  },
+  {
+    label: "Stage 4 · Build Your Brand",
+    color: "#f5a623",
+    agents: [
+      { id: "trendscout", name: "LinkedIn Trend Scout", desc: "Daily top 5 traction topics in AI, PM and tech — your angle, hook, verified articles and videos", icon: "📈", component: LinkedInTrendScout },
     ],
   },
 ];
@@ -139,7 +147,7 @@ function HomePage({ onOpen }) {
                 Sunny Bhargava <span style={{ color: "#ccd0e8", fontWeight: 400 }}>·</span> Product Management Job Agent
               </h1>
               <p style={{ fontSize: 13, color: "#555878", marginTop: 4 }}>
-                8 AI agents across the job search pipeline — tailor, verify, apply, connect, prepare.
+                9 AI agents across the job search pipeline — tailor, verify, apply, connect, prepare, and build your brand.
               </p>
             </div>
           </div>
