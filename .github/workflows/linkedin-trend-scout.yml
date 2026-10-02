@@ -24,12 +24,28 @@ jobs:
         with:
           node-version: 22
 
+      # Skips quietly (no failure emails) until the ANTHROPIC_API_KEY
+      # repository secret is added — the in-app button works without it
+      - name: Check for API key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY secret set; skipping the daily brief." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Research today's top 5 topics
+        if: steps.key.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/linkedin-trend-scout.mjs
 
       - name: Commit the brief
+        if: steps.key.outputs.present == 'true'
         run: |
           git config user.name "linkedin-trend-scout[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

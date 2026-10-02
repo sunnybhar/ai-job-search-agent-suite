@@ -8,36 +8,35 @@ import {
   FALLBACK_BETA,
   PILLARS,
 } from "./trendScoutCore";
+import { apiUrl, apiHeaders } from "./lib/api";
 
 // ─────────────────────────────────────────────────────────────────
 // LINKEDIN TREND SCOUT v1.0 — Sunny
 // - Daily brief: a GitHub Action researches every weekday morning and
 //   publishes /linkedin-briefs/latest.json — this page shows it on open
-// - "Run fresh research" runs the same pipeline on demand via /api/claude
+// - "Run fresh research" runs the same pipeline on demand (works under npm start)
 // - 5 topics ranked by traction × fit, each with your angle, hook,
 //   outline, verified articles + videos, and a one-click full draft
 // - Post log feeds real follower results back into the next scan
 // ─────────────────────────────────────────────────────────────────
-const API_URL = "/api/claude";
-// ── LOCAL DEV FALLBACK ── same pattern as the other agents
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", "anthropic-beta": FALLBACK_BETA }
-    : { "Content-Type": "application/json", "anthropic-beta": FALLBACK_BETA };
+// API routing comes from the shared client in src/lib/api.js: direct key
+// only under `npm start`, the /api/claude proxy in any production build.
 
 const HISTORY_KEY = "trendscout_history";
 const PROFILE_KEY = "trendscout_profile";
 const POSTLOG_KEY = "trendscout_postlog";
 
 async function transport(body) {
-  const res = await fetch(apiUrl(), { method: "POST", headers: apiHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(apiUrl(), {
+    method: "POST",
+    headers: { ...apiHeaders(), "anthropic-beta": FALLBACK_BETA },
+    body: JSON.stringify(body),
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg =
       res.status === 504
-        ? "The Vercel function timed out. Raise the function max duration in Vercel (Settings → Functions), or use the daily brief."
+        ? "The server cut the request off for taking too long. Run the agent locally with `npm start`, or use the daily brief."
         : data?.error?.message || `API error ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
