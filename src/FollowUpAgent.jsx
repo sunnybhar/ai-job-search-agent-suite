@@ -1,9 +1,12 @@
 import { useState, useRef } from "react";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { safeParseJSON } from "./lib/json";
 
 // ─────────────────────────────────────────────────────────────────
-// 🔑 YOUR API KEY
+// API TRANSPORT
+// Migrated to the shared proxy client in src/lib/api.js.
+// The key no longer exists in this file or in the browser bundle.
 // ─────────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
 
 // ─────────────────────────────────────────────────────────────────
 // CANDIDATE CONSTANTS
@@ -161,29 +164,7 @@ OUTPUT FORMAT — raw JSON only, no preamble, no markdown:
   "what_to_avoid": "one sentence — the mistake most people make in this scenario"
 }`;
 
-// ─────────────────────────────────────────────────────────────────
-// API CALL
-// ─────────────────────────────────────────────────────────────────
-function safeParseJSON(raw) {
-  if (!raw) throw new Error("Empty response");
-  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error(`No JSON found. Got: "${text.slice(0, 100)}"`);
-  const slice = text.slice(start, end + 1);
-  try { return JSON.parse(slice); }
-  catch (e) {
-    const sanitized = slice.replace(/"((?:[^"\\]|\\.)*)"/gs,
-      m => m.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"));
-    return JSON.parse(sanitized);
-  }
-}
-
 async function callClaude(scenario, fields) {
-  if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === "YOUR_API_KEY_HERE") {
-    throw new Error("API_KEY_MISSING");
-  }
-
   const scenarioMeta = SCENARIOS.find(s => s.id === scenario);
   const fieldLines = Object.entries(fields)
     .filter(([, v]) => v.trim())
@@ -196,14 +177,9 @@ GOAL: ${scenarioMeta.goal}
 INPUT DETAILS:
 ${fieldLines}`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(apiUrl(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
       max_tokens: 2000,
@@ -302,7 +278,7 @@ export default function FollowUpAgent() {
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (e) {
       if (e.message === "API_KEY_MISSING") {
-        setError("API key missing — paste your key at line 6 of FollowUpAgent.jsx");
+        setError("The server is not configured with an API key. Check ANTHROPIC_API_KEY in Vercel.");
       } else {
         setError(`Error: ${e.message}`);
       }

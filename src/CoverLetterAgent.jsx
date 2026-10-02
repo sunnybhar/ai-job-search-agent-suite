@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Document, Packer, Paragraph, TextRun, AlignmentType } from "docx";
+import { apiUrl, apiHeaders } from "./lib/api";
 
 // ─────────────────────────────────────────────────────────────────
 // COVER LETTER AGENT v4.0 — Sunny
@@ -11,18 +12,9 @@ import { Document, Packer, Paragraph, TextRun, AlignmentType } from "docx";
 // - Delimiter output format — no fragile JSON with long strings
 // - All API calls via /api/claude proxy (key never in the browser)
 // ─────────────────────────────────────────────────────────────────
-const API_URL = "/api/claude";
-// ── LOCAL DEV FALLBACK ──
-// If REACT_APP_ANTHROPIC_KEY exists in your local .env, the app calls the
-// Anthropic API directly so plain `npm start` works (no `vercel dev` needed).
-// IMPORTANT: in Vercel, DELETE the REACT_APP_ANTHROPIC_KEY env variable —
-// production must use the proxy, or the key gets baked into the public bundle.
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
-    : { "Content-Type": "application/json" };
+// API transport lives in src/lib/api.js (one copy for every agent).
+// The dev fallback there is gated on NODE_ENV so a production
+// build cannot bypass the proxy.
 const HISTORY_KEY = "coverletter_sunny_history";
 const BASE_RESUME_KEY = "tailor_sunny_base_resume"; // shared with Resume Tailor
 const CONTACTS_KEY = "jobsuite_contacts"; // written by the Coffee Chat agent

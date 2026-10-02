@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect } from "react";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { safeParseJSON } from "./lib/json";
 
-const ANTHROPIC_API_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
+// ─────────────────────────────────────────────────────────────────
+// API TRANSPORT
+// Migrated to the shared proxy client in src/lib/api.js.
+// The key no longer exists in this file or in the browser bundle.
+// ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────
 // CANDIDATE
@@ -143,34 +149,10 @@ RESPOND IN RAW JSON ONLY — no preamble, no markdown fences:
   "confidence_note": "one honest sentence on fit strength"
 }`;
 
-// ─────────────────────────────────────────────────────────────────
-// API HELPERS
-// ─────────────────────────────────────────────────────────────────
-function safeParseJSON(raw) {
-  if (!raw) throw new Error("Empty response");
-  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error(`No JSON found: "${text.slice(0, 100)}"`);
-  const slice = text.slice(start, end + 1);
-  try { return JSON.parse(slice); }
-  catch {
-    const s = slice.replace(/"((?:[^"\\]|\\.)*)"/gs,
-      m => m.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"));
-    return JSON.parse(s);
-  }
-}
-
 async function apiCallJSON(systemPrompt, userMessage) {
-  if (!ANTHROPIC_API_KEY) throw new Error("API_KEY_MISSING");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch(apiUrl(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
       max_tokens: 2000,
@@ -188,7 +170,6 @@ async function apiCallJSON(systemPrompt, userMessage) {
 }
 
 async function fetchUrlContent(url) {
-  if (!ANTHROPIC_API_KEY) throw new Error("API_KEY_MISSING");
   const isLinkedIn = url.includes("linkedin.com");
   if (!isLinkedIn) {
     try {
@@ -211,9 +192,9 @@ async function fetchUrlContent(url) {
       ? url.includes("/company/") ? `${url.split("/company/")[1]?.replace(/\//g, "")} startup company` : `${url.split("/in/")[1]?.replace(/\//g, "")} founder`
       : `${domain} startup product`;
   } catch { q = url; }
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch(apiUrl(), {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+    headers: apiHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6", max_tokens: 800,
       system: "Search and return a concise factual summary: what the company does, product, business model, customers, recent news. Plain text only.",
@@ -233,10 +214,9 @@ async function extractPDFText(file) {
     reader.onload = async (e) => {
       try {
         const base64 = e.target.result.split(",")[1];
-        if (!ANTHROPIC_API_KEY) throw new Error("API_KEY_MISSING");
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
+        const res = await fetch(apiUrl(), {
           method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+          headers: apiHeaders(),
           body: JSON.stringify({
             model: "claude-sonnet-4-6", max_tokens: 2000,
             messages: [{

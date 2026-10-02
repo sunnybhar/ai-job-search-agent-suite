@@ -1,15 +1,11 @@
 import { useState, useRef } from "react";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { safeParseJSON } from "./lib/json";
 
 // All API calls go through the serverless proxy — key never in the browser
-const API_URL = "/api/claude";
-// LOCAL DEV FALLBACK: with REACT_APP_ANTHROPIC_KEY in .env, plain `npm start`
-// works. In Vercel, DELETE that env var so production uses the proxy.
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
-    : { "Content-Type": "application/json" };
+// API transport lives in src/lib/api.js (one copy for every agent).
+// The dev fallback there is gated on NODE_ENV so a production
+// build cannot bypass the proxy.
 
 // ── STORY BANK — durable STAR stories linked to resume claims ──
 const STORY_BANK_KEY = "jobsuite_story_bank";
@@ -281,24 +277,6 @@ RESPOND IN RAW JSON ONLY:
 }`;
 };
 
-// ─────────────────────────────────────────────────────────────────
-// API HELPERS
-// ─────────────────────────────────────────────────────────────────
-function safeParseJSON(raw) {
-  if (!raw) throw new Error("Empty response");
-  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error(`No JSON found: "${text.slice(0, 100)}"`);
-  const slice = text.slice(start, end + 1);
-  try { return JSON.parse(slice); }
-  catch {
-    const s = slice.replace(/"((?:[^"\\]|\\.)*)"/gs,
-      m => m.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"));
-    return JSON.parse(s);
-  }
-}
-
 async function apiCallJSON(systemPrompt, userMessage) {
   const res = await fetch(apiUrl(), {
     method: "POST",
@@ -446,7 +424,7 @@ export default function BehavioralCoach() {
       setBankResult(r);
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (e) {
-      setError(e.message === "API_KEY_MISSING" ? "API key missing — paste it at line 4." : `Error: ${e.message}`);
+      setError(e.message === "API_KEY_MISSING" ? "The server is not configured with an API key. Check ANTHROPIC_API_KEY in Vercel." : `Error: ${e.message}`);
     }
     setLoading(false);
   }
@@ -1009,7 +987,7 @@ export default function BehavioralCoach() {
 
                     if (turn.type === "feedback") {
                       const fb = turn.data.feedback;
-                      
+
                       return (
                         <div key={i} className="fade" style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                           <div style={{
