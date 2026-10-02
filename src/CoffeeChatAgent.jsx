@@ -1,18 +1,14 @@
 import { useState, useRef, useEffect } from "react";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { safeParseJSON } from "./lib/json";
 
 // ─────────────────────────────────────────────────────────────────
 // 🔑 YOUR API KEY
 // ─────────────────────────────────────────────────────────────────
 // All API calls go through the serverless proxy — key never in the browser
-const API_URL = "/api/claude";
-// LOCAL DEV FALLBACK: with REACT_APP_ANTHROPIC_KEY in .env, plain `npm start`
-// works. In Vercel, DELETE that env var so production uses the proxy.
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
-    : { "Content-Type": "application/json" };
+// API transport lives in src/lib/api.js (one copy for every agent).
+// The dev fallback there is gated on NODE_ENV so a production
+// build cannot bypass the proxy.
 
 // ── SHARED CONTACTS STORE — read by Cover Letter & Resume Tailors ──
 const CONTACTS_KEY = "jobsuite_contacts";
@@ -192,17 +188,6 @@ async function fetchUrlContent(url) {
   if (!response.ok) throw new Error("URL fetch failed");
   const data = await response.json();
   return data.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim();
-}
-
-// ─────────────────────────────────────────────────────────────────
-// SAFE JSON PARSE
-// ─────────────────────────────────────────────────────────────────
-function safeParseJSON(raw) {
-  let text = raw.replace(/```json|```/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON found in response");
-  return JSON.parse(text.slice(start, end + 1));
 }
 
 // ─────────────────────────────────────────────────────────────────

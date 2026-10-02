@@ -2,6 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import mammoth from "mammoth";
 import * as pdfjsLib from "pdfjs-dist";
 import { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle } from "docx";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { scoreCoverage, parseKeywordLines } from "./lib/scoring";
+import { safeParseJSON } from "./lib/json";
 
 // pdfjs worker — served from public/ (same setup as ATS Scanner)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.mjs`;
@@ -13,18 +16,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.m
 // Pipeline: keywords → before-coverage → analysis+plan → rewrite
 //           (implements the plan) → after-coverage → fact-check.
 // ─────────────────────────────────────────────────────────────────
-const API_URL = "/api/claude";
-// ── LOCAL DEV FALLBACK ──
-// If REACT_APP_ANTHROPIC_KEY exists in your local .env, the app calls the
-// Anthropic API directly so plain `npm start` works (no `vercel dev` needed).
-// IMPORTANT: in Vercel, DELETE the REACT_APP_ANTHROPIC_KEY env variable —
-// production must use the proxy, or the key gets baked into the public bundle.
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
-    : { "Content-Type": "application/json" };
+// API transport lives in src/lib/api.js (one copy for every agent).
+// The dev fallback there is gated on NODE_ENV so a production
+// build cannot bypass the proxy.
 
 const STORAGE_KEYS = {
   baseResume: "tailor_sunny_base_resume",
@@ -156,92 +150,37 @@ async function apiCall({ model, system, userMessage, maxTokens }) {
   return (data.content || []).map((b) => b.text || "").join("");
 }
 
-function safeParseJSON(raw) {
-  if (!raw) throw new Error("Empty response");
-  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON found in response");
-  text = text.slice(start, end + 1);
-  try { return JSON.parse(text); } catch {}
-  // eslint-disable-next-line no-control-regex
-  const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-  try { return JSON.parse(cleaned); } catch {}
-  const sanitized = cleaned.replace(/"((?:[^"\\]|\\.)*)"/gs, (m) =>
-    m.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
-  );
-  return JSON.parse(sanitized);
-}
-
 // ─────────────────────────────────────────────────────────────────
 // DETERMINISTIC KEYWORD MATCHING
-// Fixed stemmer: loops until stable so "operations" and "operation"
-// reduce to the SAME stem (the old single-pass version did not).
+// The engine now lives in src/lib/scoring.js, shared with the ATS
+// Scanner. Previously each agent carried its own copy and the
+// copies had drifted: the Scanner weighted required skills and
+// tools at 2x with acronym expansion, this file did neither,
+// while the UI claimed both used the same engine.
+// Numbers will read lower than before. That is the fix, not a
+// regression. Missing a required skill now costs twice what
+// missing a soft skill does.
 // ─────────────────────────────────────────────────────────────────
-function normalizeText(s) {
-  return s.toLowerCase().replace(/[^a-z0-9\s+#.]/g, " ").replace(/\s+/g, " ");
-}
-
-function stemWord(w) {
-  let word = w;
-  let prev = null;
-  while (word !== prev && word.length > 4) {
-    prev = word;
-    word = word.replace(/(ings?|ations?|ions?|ments?|ed|es|s)$/, "");
-  }
-  if (word.length > 4) word = word.replace(/e$/, "");
-  return word;
-}
-
-function stemsEqual(a, b) {
-  if (a === b) return true;
-  if (a.length >= 4 && b.length >= 4) return a.startsWith(b) || b.startsWith(a);
-  return false;
-}
-
-function keywordMatches(keyword, normResume, resumeStems) {
-  const normKw = normalizeText(keyword).trim();
-  if (!normKw) return false;
-  if (normResume.includes(normKw)) return true;
-  const kwWords = normKw.split(" ").filter((w) => w.length > 3);
-  if (kwWords.length === 0) return false;
-  return kwWords.every((w) => {
-    const ks = stemWord(w);
-    return resumeStems.some((rs) => stemsEqual(ks, rs)) || normResume.includes(w);
-  });
-}
-
-function scoreCoverage(keywords, resumeText) {
-  const normResume = normalizeText(resumeText);
-  const resumeStems = [...new Set(normResume.split(" ").filter((w) => w.length > 3).map(stemWord))];
-  const matched = [];
-  const missing = [];
-  keywords.forEach((k) => {
-    if (keywordMatches(k.keyword, normResume, resumeStems)) matched.push(k);
-    else missing.push(k);
-  });
-  const pct = keywords.length ? Math.round((matched.length / keywords.length) * 100) : 0;
-  return { matched, missing, pct };
-}
-
-function parseKeywordLines(raw) {
-  const CATEGORIES = ["title", "required_skill", "preferred_skill", "responsibility", "tool", "soft_skill", "domain", "metric"];
-  const seen = new Set();
-  const out = [];
-  raw.split("\n").forEach((line) => {
-    const parts = line.split("::");
-    if (parts.length !== 2) return;
-    const category = parts[0].trim().toLowerCase();
-    const keyword = parts[1].replace(/^[-•*\d.]+\s*/, "").trim();
-    if (!CATEGORIES.includes(category)) return;
-    if (keyword.length < 2 || keyword.length > 60) return;
-    const dedup = keyword.toLowerCase();
-    if (seen.has(dedup)) return;
-    seen.add(dedup);
-    out.push({ keyword, category });
-  });
-  return out.slice(0, 40);
-}
+// Domain vocabulary for THIS agent. The shared engine holds math
+// only, so product management terms stay in this file and do not
+// leak into Tanya's scoring.
+const DOMAIN_ACRONYMS = {
+  npi: "new product introduction",
+  prd: "product requirements document",
+  tpm: "technical program manager",
+  pm: "product manager",
+  jit: "just in time",
+  sdlc: "software development lifecycle",
+  uat: "user acceptance testing",
+};
+// Stemming collapses "production" into "product". For product
+// versus program versus project that is a false positive that
+// changes what a JD looks like it is asking for.
+const EXACT_ONLY = [
+  "product", "production", "product management", "program management",
+  "project management", "product manager", "program manager", "project manager",
+];
+const SCORING_OPTIONS = { acronyms: DOMAIN_ACRONYMS, exactOnly: EXACT_ONLY };
 
 function parseVerifyLines(raw) {
   return raw
@@ -486,7 +425,7 @@ async function runTailor(jd, resume, onProgress) {
   if (keywords.length === 0) throw new Error("Keyword extraction returned nothing usable. Re-run.");
 
   // 2 — deterministic BEFORE coverage
-  const before = scoreCoverage(keywords, resume);
+  const before = scoreCoverage(keywords, resume, SCORING_OPTIONS);
 
   // 3 — analysis + rewrite plan (Opus), grounded in the real coverage report
   onProgress("Step 2 of 5 — Building the rewrite plan...");
@@ -519,7 +458,7 @@ MISSING (${before.missing.length}): ${before.missing.map((k) => k.keyword).join(
 
   // 5 — deterministic AFTER coverage (same keywords, same math)
   onProgress("Step 4 of 5 — Re-scoring the rewrite (deterministic)...");
-  const after = scoreCoverage(keywords, rewritten);
+  const after = scoreCoverage(keywords, rewritten, SCORING_OPTIONS);
 
   // 6 — anti-fabrication fact-check (Sonnet, plain text — graceful on failure)
   onProgress("Step 5 of 5 — Fact-checking every claim against your original...");

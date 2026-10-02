@@ -1,23 +1,17 @@
 import { useState, useRef } from "react";
 import mammoth from "mammoth";
 import * as pdfjsLib from "pdfjs-dist";
+import { apiUrl, apiHeaders } from "./lib/api";
+import { scoreCoverage, parseKeywordLines } from "./lib/scoring";
+import { safeParseJSON } from "./lib/json";
 
 // Configure pdfjs worker — served locally from the public folder (most reliable for Create React App)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.mjs`;
 
 // All API calls go through the serverless proxy — key never in the browser
-const API_URL = "/api/claude";
-// ── LOCAL DEV FALLBACK ──
-// If REACT_APP_ANTHROPIC_KEY exists in your local .env, the app calls the
-// Anthropic API directly so plain `npm start` works (no `vercel dev` needed).
-// IMPORTANT: in Vercel, DELETE the REACT_APP_ANTHROPIC_KEY env variable —
-// production must use the proxy, or the key gets baked into the public bundle.
-const DEV_KEY = process.env.REACT_APP_ANTHROPIC_KEY;
-const apiUrl = () => (DEV_KEY ? "https://api.anthropic.com/v1/messages" : API_URL);
-const apiHeaders = () =>
-  DEV_KEY
-    ? { "Content-Type": "application/json", "x-api-key": DEV_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }
-    : { "Content-Type": "application/json" };
+// API transport lives in src/lib/api.js (one copy for every agent).
+// The dev fallback there is gated on NODE_ENV so a production
+// build cannot bypass the proxy.
 
 // ─────────────────────────────────────────────────────────────────
 // FILE EXTRACTION — DETERMINISTIC
@@ -77,90 +71,6 @@ async function extractPDF(file) {
   const isLowYield = wordCount < 50 && file.size > 50000;
 
   return { text: fullText.trim(), totalItems, wordCount, isLowYield };
-}
-
-// ─────────────────────────────────────────────────────────────────
-// API HELPERS
-// ─────────────────────────────────────────────────────────────────
-function safeParseJSON(raw) {
-  if (!raw) throw new Error("Empty response");
-  let text = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON found");
-  let slice = text.slice(start, end + 1);
-
-  // Pass 1 — direct parse
-  try { return JSON.parse(slice); } catch {}
-
-  // Pass 2 — escape control chars inside strings, remove trailing commas
-  let p2 = escapeControlsInStrings(slice).replace(/,(\s*[}\]])/g, "$1");
-  try { return JSON.parse(p2); } catch {}
-
-  // Pass 3 — also attempt stray-quote fix (best effort)
-  let p3 = fixStrayQuotes(p2).replace(/,(\s*[}\]])/g, "$1");
-  try { return JSON.parse(p3); } catch (e) {
-    throw new Error(`JSON parse failed after sanitizing: ${e.message}`);
-  }
-}
-
-// Escapes raw control characters that appear inside string literals.
-// These (newline, tab, CR) are the most common and are always safe to escape.
-function escapeControlsInStrings(s) {
-  let out = "";
-  let inString = false;
-  let prev = "";
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    const code = c.charCodeAt(0);
-    if (c === '"' && prev !== "\\") {
-      inString = !inString;
-      out += c;
-    } else if (inString) {
-      if (c === "\n") out += "\\n";
-      else if (c === "\r") out += "\\r";
-      else if (c === "\t") out += "\\t";
-      else if (code < 0x20) { /* drop other control chars */ }
-      else out += c;
-    } else {
-      if (code < 0x20 && c !== "\n" && c !== "\r" && c !== "\t") { /* drop */ }
-      else out += c;
-    }
-    prev = c;
-  }
-  return out;
-}
-
-// Best-effort stray-quote escaping. Handles most cases; genuinely ambiguous
-// cases (stray quote immediately followed by comma) are prevented at the
-// prompt level by instructing the model to avoid double quotes in values.
-function fixStrayQuotes(s) {
-  let out = "";
-  let inString = false;
-  let prev = "";
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === '"' && prev !== "\\") {
-      if (!inString) { inString = true; out += c; }
-      else {
-        let j = i + 1;
-        while (j < s.length && /\s/.test(s[j])) j++;
-        const nextCh = s[j] || "";
-        if (nextCh === "" || ":}]".includes(nextCh)) { inString = false; out += c; }
-        else if (nextCh === ",") {
-          // ambiguous — look further: if after comma comes a quoted key (key:), treat as closing
-          let k = j + 1;
-          while (k < s.length && /\s/.test(s[k])) k++;
-          // if next is a quote starting what looks like a key, close; else escape
-          if (s[k] === '"') { inString = false; out += c; }
-          else { out += '\\"'; }
-        }
-        else { out += '\\"'; }
-      }
-    } else { out += c; }
-    prev = c;
-  }
-  return out;
 }
 
 async function apiCallJSON(systemPrompt, userMessage, maxTokens = 2000) {
@@ -252,68 +162,27 @@ No bullets, no numbers, no extra text.`;
 
 // ─────────────────────────────────────────────────────────────────
 // KEYWORD MATCHING — DETERMINISTIC
+// Engine moved to src/lib/scoring.js so the Scanner and both
+// Resume Tailors cannot drift apart again. Weighting (2x on
+// title, required_skill and tool) and acronym expansion are
+// unchanged. Short acronym substring false positives are fixed:
+// "AI" no longer matches inside detail, training or available.
 // ─────────────────────────────────────────────────────────────────
-function normalizeText(s) {
-  return s.toLowerCase().replace(/[^a-z0-9\s+#.]/g, " ").replace(/\s+/g, " ");
-}
-
-// Acronym <-> expansion table: "GTM" in the JD should match "go-to-market"
-// in the resume and vice versa. Both directions are checked.
-const ACRONYMS = {
-  "gtm": "go to market", "p l": "profit and loss", "npi": "new product introduction",
-  "kpi": "key performance indicator", "okr": "objectives and key results",
-  "prd": "product requirements document", "roi": "return on investment",
-  "saas": "software as a service", "b2b": "business to business",
-  "b2c": "business to consumer", "crm": "customer relationship management",
-  "erp": "enterprise resource planning", "jit": "just in time",
-  "sla": "service level agreement", "uat": "user acceptance testing",
-  "nps": "net promoter score", "sdlc": "software development lifecycle",
-  "ghg": "greenhouse gas", "esg": "environmental social and governance",
-  "sbti": "science based targets", "cdp": "carbon disclosure project",
-  "mrr": "monthly recurring revenue", "arr": "annual recurring revenue",
-  "pm": "product manager", "tpm": "technical program manager"
+// Both candidates use this Scanner, so it carries both vocabularies.
+const DOMAIN_ACRONYMS = {
+  npi: "new product introduction",
+  prd: "product requirements document",
+  tpm: "technical program manager",
+  pm: "product manager",
+  jit: "just in time",
+  sdlc: "software development lifecycle",
+  uat: "user acceptance testing",
+  ghg: "greenhouse gas",
+  esg: "environmental social and governance",
+  sbti: "science based targets",
+  cdp: "carbon disclosure project",
 };
-const EXPANSIONS = Object.fromEntries(Object.entries(ACRONYMS).map(([a, e]) => [e, a]));
-
-function keywordVariants(normKw) {
-  const variants = [normKw];
-  if (ACRONYMS[normKw]) variants.push(ACRONYMS[normKw]);
-  if (EXPANSIONS[normKw]) variants.push(EXPANSIONS[normKw]);
-  return variants;
-}
-
-// Smart match — handles word variants and stemming
-function keywordMatches(keyword, resumeText) {
-  const normResume = normalizeText(resumeText);
-  const normKw = normalizeText(keyword).trim();
-  if (!normKw) return false;
-
-  // Direct phrase match — including acronym/expansion variants
-  if (keywordVariants(normKw).some(v => normResume.includes(v))) return true;
-
-  // Word-level match — all significant words present (handles "stakeholder management" vs "managed stakeholders")
-  const kwWords = normKw.split(" ").filter(w => w.length > 3);
-  if (kwWords.length === 0) {
-    return normResume.includes(normKw);
-  }
-  // Stem each word to a STABLE root (loops until no suffix remains, so
-  // "operations" and "operation" reduce to the same stem)
-  const stem = w => {
-    let word = w, prev = null;
-    while (word !== prev && word.length > 4) {
-      prev = word;
-      word = word.replace(/(ings?|ations?|ions?|ments?|ed|es|s)$/, "");
-    }
-    if (word.length > 4) word = word.replace(/e$/, "");
-    return word;
-  };
-  const stemsEqual = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-  const resumeStems = [...new Set(normResume.split(" ").filter(w => w.length > 3).map(stem))];
-  return kwWords.every(w => {
-    const ks = stem(w);
-    return resumeStems.some(rs => stemsEqual(ks, rs)) || normResume.includes(w);
-  });
-}
+const SCORING_OPTIONS = { acronyms: DOMAIN_ACRONYMS };
 
 // ─────────────────────────────────────────────────────────────────
 // PDF EXPORT
@@ -458,35 +327,24 @@ export default function ATSScannerAgent() {
       // Keyword matching — deterministic
       // Parse "category :: keyword" lines; required skills, tools & titles weigh 2x
       // (that is how a recruiter's search query actually weights them)
-      const seenKw = new Set();
-      const kwObjs = [];
-      kwRaw.split("\n").forEach(l => {
-        const parts = l.split("::");
-        const category = parts.length === 2 ? parts[0].trim().toLowerCase() : "domain";
-        const keyword = (parts.length === 2 ? parts[1] : parts[0]).replace(/^[-•*\d.]+\s*/, "").trim();
-        if (keyword.length < 2 || keyword.length > 60) return;
-        const d = keyword.toLowerCase();
-        if (seenKw.has(d)) return;
-        seenKw.add(d);
-        kwObjs.push({ keyword, category, weight: ["title", "required_skill", "tool"].includes(category) ? 2 : 1 });
-      });
-      const matched = [];
-      const missing = [];
-      const weights = {};
-      let wTotal = 0, wMatched = 0;
-      kwObjs.forEach(k => {
-        weights[k.keyword] = k.weight;
-        wTotal += k.weight;
-        if (keywordMatches(k.keyword, cleanText)) { matched.push(k.keyword); wMatched += k.weight; }
-        else missing.push(k.keyword);
-      });
-      const keywordResult = { matched, missing, weights, weightedPct: wTotal ? Math.round((wMatched / wTotal) * 100) : 0 };
+      // fallbackCategory keeps the old tolerance for lines that come
+      // back without a "category ::" prefix.
+      const kwObjs = parseKeywordLines(kwRaw, { limit: 0, fallbackCategory: "domain" });
+      const coverage = scoreCoverage(kwObjs, cleanText, SCORING_OPTIONS);
+      // The UI renders keyword pills from strings, so flatten here.
+      const keywordResult = {
+        matched: coverage.matched.map(k => k.keyword),
+        missing: coverage.missing.map(k => k.keyword),
+        weights: coverage.weights,
+        weightedPct: coverage.weightedPct,
+        byCategory: coverage.byCategory,
+      };
 
       setProgressMsg("Step 5 of 5 — Writing fix suggestions...");
       // Suggestions — plain text, one per line, zero JSON parsing risk
       let suggestionsRaw = "";
       try {
-        suggestionsRaw = await apiCallText(PROMPT_SUGGESTIONS, `MISSING KEYWORDS: ${missing.slice(0, 15).join(", ")}\n\nRESUME:\n${cleanText.slice(0, 8000)}`);
+        suggestionsRaw = await apiCallText(PROMPT_SUGGESTIONS, `MISSING KEYWORDS: ${keywordResult.missing.slice(0, 15).join(", ")}\n\nRESUME:\n${cleanText.slice(0, 8000)}`);
       } catch { suggestionsRaw = ""; }
       const suggestions = {
         suggestions: suggestionsRaw.split("\n")

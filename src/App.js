@@ -4,11 +4,13 @@ import { useState, useEffect } from "react";
 import ResumeTailorAgent from "./ResumeTailorAgent_Sunny";
 import ResumeTailorAgentTanya from "./ResumeTailorAgent_Tanya";
 import ATSScannerAgent from "./ATSScannerAgent";
+import ResumeAuditAgent from "./ResumeAuditAgent";
 import CoverLetterAgent from "./CoverLetterAgent";
 import StartupEmailAgent from "./StartupEmailAgent";
 import FollowUpAgent from "./FollowUpAgent";
 import CoffeeChatAgent from "./CoffeeChatAgent";
 import BehavioralCoach from "./BehavioralCoach";
+import LinkedInTrendScout from "./LinkedInTrendScout";
 
 // ─────────────────────────────────────────────────────────────────
 // HOME PAGE v2.0 — "Sunny Bhargava · Product Management Job Agent"
@@ -22,6 +24,7 @@ const STAGES = [
     label: "Stage 1 · Prepare",
     color: "#0099ff",
     agents: [
+      { id: "audit", name: "Resume Audit & Rewrite", desc: "Two-step gated audit: ATS score, hiring manager read, then rewrite on your decisions", icon: "⚖️", component: ResumeAuditAgent },
       { id: "tailor_sunny", name: "Resume Tailor — Sunny", desc: "JD-tailored rewrite with real before/after scoring and fact check", icon: "⚡", component: ResumeTailorAgent },
       { id: "tailor_tanya", name: "Resume Tailor — Tanya", desc: "Same engine, tuned for sustainability / ESG consulting roles", icon: "🌱", component: ResumeTailorAgentTanya },
       { id: "scanner", name: "ATS Scanner & Match", desc: "Parse test, field extraction, deterministic keyword coverage", icon: "🔍", component: ATSScannerAgent },
@@ -44,56 +47,132 @@ const STAGES = [
       { id: "behavioral", name: "Behavioral Coach", desc: "STAR story practice and interview answer coaching", icon: "🎤", component: BehavioralCoach },
     ],
   },
+  {
+    label: "Stage 4 · Build Your Brand",
+    color: "#f5a623",
+    agents: [
+      { id: "trendscout", name: "LinkedIn Trend Scout", desc: "Daily top 5 traction topics in AI, PM and tech — your angle, hook, verified articles and videos", icon: "📈", component: LinkedInTrendScout },
+    ],
+  },
 ];
 
-// ── Live metrics from the history the rebuilt agents save ──
+// ── Live metrics from the history the agents save ──
+//
+// FOUR PROBLEMS IN THE OLD BLOCK, ALL FIXED HERE
+//
+// 1. Measurement was averaged with opinion. tailorRuns included
+//    audits. Tailor afterPct is deterministic keyword coverage.
+//    Audit afterPct is parsed from the model's own RESCORE block,
+//    which is the model grading its own work. Averaging them into
+//    one "Avg Coverage After" breaks the principle that judgment
+//    must be labelled as judgment. They are two numbers now.
+//
+// 2. Tanya's runs sat inside Sunny's funnel. Metrics are computed
+//    per person.
+//
+// 3. Double counting. One application usually produces a tailored
+//    resume and a cover letter, and a priority application an audit
+//    too. Each was its own funnel row, so priority applications
+//    carried two or three times the weight of volume ones. Runs are
+//    deduplicated into applications by company and role.
+//
+// 4. The sign was hardcoded. `+${avgImprovement}` printed "+-4" on
+//    a regression.
+//
+// It also reports how many applications have no status set, because
+// a response rate over the four you remembered to update is not a
+// response rate.
 function readJSON(key) {
   try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
 }
 
-function computeMetrics() {
-  const sunny = readJSON("tailor_sunny_history");
-  const tanya = readJSON("tailor_tanya_history");
-  const letters = readJSON("coverletter_sunny_history");
-  const tailorRuns = [...sunny, ...tanya];
+const STATUS_RANK = {
+  applied: 0, "no reply": 0, rejected: 0, response: 1, interview: 2, offer: 3,
+};
 
-  const withScores = tailorRuns.filter((r) => typeof r.afterPct === "number");
-  const avgCoverage = withScores.length
-    ? Math.round(withScores.reduce((s, r) => s + r.afterPct, 0) / withScores.length)
-    : null;
-  const avgImprovement = withScores.length
-    ? Math.round(withScores.reduce((s, r) => s + (r.afterPct - (r.beforePct || 0)), 0) / withScores.length)
-    : null;
+function average(values) {
+  if (!values.length) return null;
+  return Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+}
 
-  const activity = [
-    ...sunny.map((r) => ({ id: r.id, who: "Sunny", what: `Resume tailored · ${r.company}`, detail: `${r.beforePct}% → ${r.afterPct}%`, status: r.status })),
-    ...tanya.map((r) => ({ id: r.id, who: "Tanya", what: `Resume tailored · ${r.company}`, detail: `${r.beforePct}% → ${r.afterPct}%`, status: r.status })),
-    ...letters.map((r) => ({ id: r.id, who: "Sunny", what: `Cover letter · ${r.company}`, detail: r.role || "", status: r.status })),
-  ]
-    .sort((a, b) => b.id - a.id)
-    .slice(0, 5);
+function formatDelta(n) {
+  if (n === null || n === undefined) return null;
+  return `${n > 0 ? "+" : ""}${n}`;
+}
 
-  // Outcome funnel — from the status you set on each run in the agents'
-  // history dropdowns (applied → response → interview → offer)
-  const all = [...tailorRuns, ...letters];
-  const tracked = all.filter((r) => r.status);
-  const count = (list) => tracked.filter((r) => list.includes(r.status)).length;
-  const responses = count(["response", "interview", "offer"]);
-  const interviews = count(["interview", "offer"]);
-  const offers = count(["offer"]);
+function applicationKey(run) {
+  const company = String(run.company || "unknown").trim().toLowerCase();
+  const role = String(run.role || "").trim().toLowerCase();
+  return `${company}|${role}`;
+}
+
+function computeMetrics(person = "sunny") {
+  const tailor = readJSON(`tailor_${person}_history`);
+  const letters = readJSON(`coverletter_${person}_history`);
+  const audits = readJSON(`audit_${person}_history`);
+
+  // Measured: deterministic keyword coverage, tailor runs only.
+  const measuredRuns = tailor.filter((r) => typeof r.afterPct === "number");
+  const avgCoverage = average(measuredRuns.map((r) => r.afterPct));
+  // Named "keywords addressed", not "improvement". The rewrite prompt
+  // is handed the missing keyword list and then scored against that
+  // same list, so this measures compliance with the instruction, not
+  // document quality. It structurally cannot fall.
+  const avgKeywordsAddressed = average(
+    measuredRuns.map((r) => r.afterPct - (r.beforePct || 0))
+  );
+
+  // Judged: the audit agent's own re-score. Opinion, kept separate.
+  const judgedRuns = audits.filter((r) => typeof r.afterPct === "number");
+  const avgAuditScore = average(judgedRuns.map((r) => r.afterPct));
+
+  // Funnel: one row per application, not one per document.
+  const applications = new Map();
+  [...tailor, ...letters, ...audits].forEach((run) => {
+    const key = applicationKey(run);
+    const rank = run.status ? (STATUS_RANK[run.status] ?? 0) : -1;
+    const existing = applications.get(key);
+    if (!existing) {
+      applications.set(key, { key, company: run.company, role: run.role, status: run.status || null, rank, id: run.id || 0 });
+      return;
+    }
+    if (rank > existing.rank) { existing.rank = rank; existing.status = run.status || null; }
+    if ((run.id || 0) > existing.id) existing.id = run.id || 0;
+  });
+
+  const apps = [...applications.values()];
+  const tracked = apps.filter((a) => a.rank >= 0);
+  const responses = tracked.filter((a) => a.rank >= 1).length;
+  const interviews = tracked.filter((a) => a.rank >= 2).length;
+  const offers = tracked.filter((a) => a.rank >= 3).length;
+
   const funnel = {
+    applications: apps.length,
     tracked: tracked.length,
+    untracked: apps.length - tracked.length,
     responses,
     interviews,
     offers,
     responseRate: tracked.length ? Math.round((responses / tracked.length) * 100) : null,
   };
 
+  const activity = [
+    ...tailor.map((r) => ({ id: r.id, who: person === "sunny" ? "Sunny" : "Tanya", what: `Resume tailored · ${r.company}`, detail: `${r.beforePct}% → ${r.afterPct}% coverage`, status: r.status })),
+    ...audits.map((r) => ({ id: r.id, who: person === "sunny" ? "Sunny" : "Tanya", what: `Resume audit · ${r.company}`, detail: `${r.beforePct}/100 → ${r.afterPct}/100 (AI self-score)`, status: r.status })),
+    ...letters.map((r) => ({ id: r.id, who: person === "sunny" ? "Sunny" : "Tanya", what: `Cover letter · ${r.company}`, detail: r.role || "", status: r.status })),
+  ]
+    .sort((a, b) => b.id - a.id)
+    .slice(0, 5);
+
   return {
-    tailored: tailorRuns.length,
+    person,
+    tailored: tailor.length,
     letters: letters.length,
+    audits: audits.length,
     avgCoverage,
-    avgImprovement,
+    avgKeywordsAddressed,
+    avgAuditScore,
+    judgedRuns: judgedRuns.length,
     activity,
     funnel,
   };
@@ -139,7 +218,7 @@ function HomePage({ onOpen }) {
                 Sunny Bhargava <span style={{ color: "#ccd0e8", fontWeight: 400 }}>·</span> Product Management Job Agent
               </h1>
               <p style={{ fontSize: 13, color: "#555878", marginTop: 4 }}>
-                8 AI agents across the job search pipeline — tailor, verify, apply, connect, prepare.
+                9 AI agents across the job search pipeline — tailor, verify, apply, connect, prepare, and build your brand.
               </p>
             </div>
           </div>
@@ -153,8 +232,11 @@ function HomePage({ onOpen }) {
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
             <MetricCard label="Resumes Tailored" value={metrics.tailored} />
             <MetricCard label="Cover Letters" value={metrics.letters} />
-            <MetricCard label="Avg Coverage After" value={metrics.avgCoverage} suffix="%" accent="#00a184" />
-            <MetricCard label="Avg Improvement" value={metrics.avgImprovement === null ? null : `+${metrics.avgImprovement}`} suffix="pts" accent="#0066ff" />
+            <MetricCard label="Avg Coverage (measured)" value={metrics.avgCoverage} suffix="%" accent="#00a184" />
+            <MetricCard label="Keywords Addressed" value={formatDelta(metrics.avgKeywordsAddressed)} suffix="pts" accent="#0066ff" />
+            {metrics.judgedRuns > 0 && (
+              <MetricCard label="Avg Audit Score (AI judgment)" value={metrics.avgAuditScore} suffix="/100" accent="#a855f7" />
+            )}
           </div>
         )}
 
@@ -165,6 +247,9 @@ function HomePage({ onOpen }) {
             <MetricCard label="Interviews" value={metrics.funnel.interviews} accent="#a855f7" />
             <MetricCard label="Offers" value={metrics.funnel.offers} accent="#00d4aa" />
             <MetricCard label="Response Rate" value={metrics.funnel.responseRate} suffix="%" accent="#f5a623" />
+            {metrics.funnel.untracked > 0 && (
+              <MetricCard label="Untracked" value={metrics.funnel.untracked} suffix=" apps" accent="#888baa" />
+            )}
           </div>
         )}
         {metrics && metrics.funnel.tracked > 0 && metrics.funnel.responses === 0 && (
